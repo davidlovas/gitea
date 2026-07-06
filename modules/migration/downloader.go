@@ -6,6 +6,7 @@ package migration
 
 import (
 	"context"
+	"time"
 
 	"gitea.dev/modules/structs"
 )
@@ -24,6 +25,15 @@ type Downloader interface {
 	GetPullRequests(ctx context.Context, page, perPage int) ([]*PullRequest, bool, error)
 	GetReviews(ctx context.Context, reviewable Reviewable) ([]*Review, error)
 	FormatCloneURL(opts MigrateOptions, remoteAddr string) (string, error)
+
+	// SupportSyncing returns true if the downloader can fetch entities
+	// incrementally, so that an already-migrated repository can be kept
+	// up to date with its remote counterpart.
+	SupportSyncing() bool
+	// GetNewIssues returns issues updated after the given time, paginated
+	GetNewIssues(ctx context.Context, page, perPage int, updatedAfter time.Time) ([]*Issue, bool, error)
+	// GetNewPullRequests returns pull requests updated after the given time, paginated
+	GetNewPullRequests(ctx context.Context, page, perPage int, updatedAfter time.Time) ([]*PullRequest, bool, error)
 }
 
 // DownloaderFactory defines an interface to match a downloader implementation and create a downloader
