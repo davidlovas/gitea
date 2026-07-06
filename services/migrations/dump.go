@@ -365,6 +365,16 @@ func (g *RepositoryDumper) SyncBranches(ctx context.Context) error {
 	return nil
 }
 
+// PatchIssues is not supported: a dump is one-shot, it has nothing to update
+func (g *RepositoryDumper) PatchIssues(_ context.Context, _ ...*base.Issue) error {
+	return base.ErrNotSupported{Entity: "PatchIssues"}
+}
+
+// PatchPullRequests is not supported: a dump is one-shot, it has nothing to update
+func (g *RepositoryDumper) PatchPullRequests(_ context.Context, _ ...*base.PullRequest) error {
+	return base.ErrNotSupported{Entity: "PatchPullRequests"}
+}
+
 // CreateIssues creates issues
 func (g *RepositoryDumper) CreateIssues(_ context.Context, issues ...*base.Issue) error {
 	var err error

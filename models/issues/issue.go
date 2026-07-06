@@ -783,6 +783,18 @@ func insertIssue(ctx context.Context, issue *Issue) error {
 	return nil
 }
 
+// GetMaxIssueUpdatedUnix returns the latest updated_unix among a repository's
+// issues and pull requests, zero when there are none. Incremental syncs of
+// migrated repositories use it as their watermark.
+func GetMaxIssueUpdatedUnix(ctx context.Context, repoID int64) (int64, error) {
+	var maxUpdated int64
+	if _, err := db.GetEngine(ctx).Table("issue").Where("repo_id = ?", repoID).
+		Select("COALESCE(MAX(updated_unix), 0)").Get(&maxUpdated); err != nil {
+		return 0, err
+	}
+	return maxUpdated, nil
+}
+
 // UpsertIssues inserts new issues and updates existing issues in the database.
 // Existing issues are matched on (repo_id, index) — the remote issue number is
 // preserved as the issue index by migrations, so it acts as the external key.

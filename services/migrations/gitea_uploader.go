@@ -378,6 +378,46 @@ func (g *GiteaLocalUploader) SyncBranches(ctx context.Context) error {
 
 // CreateIssues creates issues
 func (g *GiteaLocalUploader) CreateIssues(ctx context.Context, issues ...*base.Issue) error {
+	iss, err := g.prepareIssues(ctx, issues...)
+	if err != nil {
+		return err
+	}
+
+	if len(iss) > 0 {
+		if err := issues_model.InsertIssues(ctx, iss...); err != nil {
+			return err
+		}
+
+		for _, is := range iss {
+			g.issues[is.Index] = is
+		}
+	}
+
+	return nil
+}
+
+// PatchIssues upserts issues into the database: existing issues, matched on
+// (repo_id, index), are updated in place and new ones are created
+func (g *GiteaLocalUploader) PatchIssues(ctx context.Context, issues ...*base.Issue) error {
+	iss, err := g.prepareIssues(ctx, issues...)
+	if err != nil {
+		return err
+	}
+
+	if len(iss) > 0 {
+		if err := issues_model.UpsertIssues(ctx, iss...); err != nil {
+			return err
+		}
+
+		for _, is := range iss {
+			g.issues[is.Index] = is
+		}
+	}
+
+	return nil
+}
+
+func (g *GiteaLocalUploader) prepareIssues(ctx context.Context, issues ...*base.Issue) ([]*issues_model.Issue, error) {
 	iss := make([]*issues_model.Issue, 0, len(issues))
 	for _, issue := range issues {
 		var labels []*issues_model.Label
@@ -427,7 +467,7 @@ func (g *GiteaLocalUploader) CreateIssues(ctx context.Context, issues ...*base.I
 		}
 
 		if err := g.remapUser(ctx, issue, &is); err != nil {
-			return err
+			return nil, err
 		}
 
 		if issue.Closed != nil {
@@ -440,24 +480,14 @@ func (g *GiteaLocalUploader) CreateIssues(ctx context.Context, issues ...*base.I
 				CreatedUnix: timeutil.TimeStampNow(),
 			}
 			if err := g.remapUser(ctx, reaction, &res); err != nil {
-				return err
+				return nil, err
 			}
 			is.Reactions = append(is.Reactions, &res)
 		}
 		iss = append(iss, &is)
 	}
 
-	if len(iss) > 0 {
-		if err := issues_model.InsertIssues(ctx, iss...); err != nil {
-			return err
-		}
-
-		for _, is := range iss {
-			g.issues[is.Index] = is
-		}
-	}
-
-	return nil
+	return iss, nil
 }
 
 // CreateComments creates comments of issues
@@ -547,18 +577,9 @@ func (g *GiteaLocalUploader) CreateComments(ctx context.Context, comments ...*ba
 
 // CreatePullRequests creates pull requests
 func (g *GiteaLocalUploader) CreatePullRequests(ctx context.Context, prs ...*base.PullRequest) error {
-	gprs := make([]*issues_model.PullRequest, 0, len(prs))
-	for _, pr := range prs {
-		gpr, err := g.newPullRequest(ctx, pr)
-		if err != nil {
-			return err
-		}
-
-		if err := g.remapUser(ctx, pr, gpr.Issue); err != nil {
-			return err
-		}
-
-		gprs = append(gprs, gpr)
+	gprs, err := g.preparePullRequests(ctx, prs...)
+	if err != nil {
+		return err
 	}
 	if err := issues_model.InsertPullRequests(ctx, gprs...); err != nil {
 		return err
@@ -566,6 +587,65 @@ func (g *GiteaLocalUploader) CreatePullRequests(ctx context.Context, prs ...*bas
 	for _, pr := range gprs {
 		g.issues[pr.Issue.Index] = pr.Issue
 		pull.StartPullRequestCheckImmediately(ctx, pr)
+	}
+	return nil
+}
+
+// PatchPullRequests upserts pull requests into the database: existing pull
+// requests, matched on (repo_id, index), are updated in place and new ones
+// are created
+func (g *GiteaLocalUploader) PatchPullRequests(ctx context.Context, prs ...*base.PullRequest) error {
+	gprs, err := g.preparePullRequests(ctx, prs...)
+	if err != nil {
+		return err
+	}
+	if err := issues_model.UpsertPullRequests(ctx, gprs...); err != nil {
+		return err
+	}
+	for _, pr := range gprs {
+		g.issues[pr.Issue.Index] = pr.Issue
+		pull.StartPullRequestCheckImmediately(ctx, pr)
+	}
+	return nil
+}
+
+func (g *GiteaLocalUploader) preparePullRequests(ctx context.Context, prs ...*base.PullRequest) ([]*issues_model.PullRequest, error) {
+	gprs := make([]*issues_model.PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		gpr, err := g.newPullRequest(ctx, pr)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := g.remapUser(ctx, pr, gpr.Issue); err != nil {
+			return nil, err
+		}
+
+		gprs = append(gprs, gpr)
+	}
+	return gprs, nil
+}
+
+// loadExistingLabelsAndMilestones fills the uploader's label and milestone
+// caches from the database, so prepared issues can reference the entities
+// created by an earlier migration of the same repository
+func (g *GiteaLocalUploader) loadExistingLabelsAndMilestones(ctx context.Context) error {
+	labels, err := issues_model.GetLabelsByRepoID(ctx, g.repo.ID, "", db.ListOptions{})
+	if err != nil {
+		return err
+	}
+	for _, label := range labels {
+		g.labels[label.Name] = label
+	}
+
+	milestones, err := db.Find[issues_model.Milestone](ctx, issues_model.FindMilestoneOptions{
+		RepoID: g.repo.ID,
+	})
+	if err != nil {
+		return err
+	}
+	for _, milestone := range milestones {
+		g.milestones[milestone.Name] = milestone.ID
 	}
 	return nil
 }

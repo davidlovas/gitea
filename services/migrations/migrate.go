@@ -12,12 +12,15 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
+	issues_model "gitea.dev/models/issues"
 	repo_model "gitea.dev/models/repo"
 	system_model "gitea.dev/models/system"
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/container"
 	"gitea.dev/modules/git"
+	"gitea.dev/modules/gitrepo"
 	"gitea.dev/modules/hostmatcher"
 	"gitea.dev/modules/log"
 	base "gitea.dev/modules/migration"
@@ -498,6 +501,108 @@ func migrateRepository(ctx context.Context, doer *user_model.User, downloader ba
 			}
 
 			if err := uploader.CreateComments(ctx, comments...); err != nil {
+				return err
+			}
+
+			if isEnd {
+				break
+			}
+		}
+	}
+
+	return uploader.Finish(ctx)
+}
+
+// SyncRepository syncs new and updated issues and pull requests of a
+// previously migrated repository from its remote
+func SyncRepository(ctx context.Context, doer *user_model.User, repo *repo_model.Repository, opts base.MigrateOptions, messenger base.Messenger) (*repo_model.Repository, error) {
+	downloader, err := newDownloader(ctx, repo.OwnerName, opts)
+	if err != nil {
+		return nil, err
+	}
+	if !downloader.SupportSyncing() {
+		log.Info("syncing is not supported for repositories of type %v, ignored", opts.GitServiceType)
+		return nil, nil
+	}
+
+	uploader := NewGiteaLocalUploader(ctx, doer, repo.OwnerName, opts.RepoName)
+	uploader.gitServiceType = opts.GitServiceType
+	uploader.repo = repo
+	uploader.sameApp = strings.HasPrefix(repo.OriginalURL, setting.AppURL)
+	uploader.gitRepo, err = gitrepo.OpenRepository(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	defer uploader.Close()
+
+	if err := uploader.loadExistingLabelsAndMilestones(ctx); err != nil {
+		return nil, err
+	}
+
+	watermark, err := issues_model.GetMaxIssueUpdatedUnix(ctx, repo.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := syncRepository(ctx, downloader, uploader, opts, messenger, time.Unix(watermark, 0)); err != nil {
+		// unlike a failed migration there is nothing to roll back: rolling
+		// back would delete the existing repository
+		if err2 := system_model.CreateRepositoryNotice(fmt.Sprintf("Sync repository (%s/%s) from %s failed: %v", repo.OwnerName, opts.RepoName, opts.OriginalURL, err)); err2 != nil {
+			log.Error("create repository notice failed: ", err2)
+		}
+		return nil, err
+	}
+	return uploader.repo, nil
+}
+
+// syncRepository downloads new and updated entities and upserts them through
+// the uploader
+func syncRepository(ctx context.Context, downloader base.Downloader, uploader base.Uploader, opts base.MigrateOptions, messenger base.Messenger, updatedAfter time.Time) error {
+	if messenger == nil {
+		messenger = base.NilMessenger
+	}
+
+	if opts.Issues {
+		log.Trace("syncing issues")
+		messenger("repo.migrate.syncing_issues")
+		issueBatchSize := uploader.MaxBatchInsertSize("issue")
+
+		for i := 1; ; i++ {
+			issues, isEnd, err := downloader.GetNewIssues(ctx, i, issueBatchSize, updatedAfter)
+			if err != nil {
+				if !base.IsErrNotSupported(err) {
+					return err
+				}
+				log.Warn("syncing issues is not supported, ignored")
+				break
+			}
+
+			if err := uploader.PatchIssues(ctx, issues...); err != nil {
+				return err
+			}
+
+			if isEnd {
+				break
+			}
+		}
+	}
+
+	if opts.PullRequests {
+		log.Trace("syncing pull requests")
+		messenger("repo.migrate.syncing_pulls")
+		prBatchSize := uploader.MaxBatchInsertSize("pullrequest")
+
+		for i := 1; ; i++ {
+			prs, isEnd, err := downloader.GetNewPullRequests(ctx, i, prBatchSize, updatedAfter)
+			if err != nil {
+				if !base.IsErrNotSupported(err) {
+					return err
+				}
+				log.Warn("syncing pull requests is not supported, ignored")
+				break
+			}
+
+			if err := uploader.PatchPullRequests(ctx, prs...); err != nil {
 				return err
 			}
 

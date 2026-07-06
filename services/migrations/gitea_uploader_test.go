@@ -5,6 +5,7 @@
 package migrations
 
 import (
+	"context"
 	"strconv"
 	"testing"
 	"time"
@@ -14,10 +15,12 @@ import (
 	repo_model "gitea.dev/models/repo"
 	"gitea.dev/models/unittest"
 	user_model "gitea.dev/models/user"
+	"gitea.dev/modules/gitrepo"
 	"gitea.dev/modules/graceful"
 	base "gitea.dev/modules/migration"
 	"gitea.dev/modules/optional"
 	"gitea.dev/modules/structs"
+	pull_service "gitea.dev/services/pull"
 	repo_service "gitea.dev/services/repository"
 
 	"github.com/stretchr/testify/assert"
@@ -221,4 +224,139 @@ func TestGiteaUploadRemapExternalUser(t *testing.T) {
 	err = uploader.remapUser(ctx, &source, &target)
 	assert.NoError(t, err)
 	assert.Equal(t, linkedUser.ID, target.GetUserID())
+}
+
+type syncTestDownloader struct {
+	base.NullDownloader
+	issues []*base.Issue
+	prs    []*base.PullRequest
+}
+
+func (d *syncTestDownloader) SupportSyncing() bool { return true }
+
+func (d *syncTestDownloader) GetNewIssues(_ context.Context, page, _ int, updatedAfter time.Time) ([]*base.Issue, bool, error) {
+	if page > 1 {
+		return nil, true, nil
+	}
+	issues := make([]*base.Issue, 0, len(d.issues))
+	for _, issue := range d.issues {
+		if !issue.Updated.Before(updatedAfter) {
+			issues = append(issues, issue)
+		}
+	}
+	return issues, true, nil
+}
+
+func (d *syncTestDownloader) GetNewPullRequests(_ context.Context, page, _ int, updatedAfter time.Time) ([]*base.PullRequest, bool, error) {
+	if page > 1 {
+		return nil, true, nil
+	}
+	prs := make([]*base.PullRequest, 0, len(d.prs))
+	for _, pr := range d.prs {
+		if !pr.Updated.Before(updatedAfter) {
+			prs = append(prs, pr)
+		}
+	}
+	return prs, true, nil
+}
+
+func TestGiteaSyncRepository(t *testing.T) {
+	unittest.PrepareTestEnv(t)
+
+	// the patch-checker queue is not initialised in unit tests; stub the enqueue
+	// so upserting a pull request doesn't touch it
+	originalAddToQueue := pull_service.AddPullRequestToCheckQueue
+	pull_service.AddPullRequestToCheckQueue = func(int64) {}
+	defer func() { pull_service.AddPullRequestToCheckQueue = originalAddToQueue }()
+
+	doer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1})
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
+
+	ctx := t.Context()
+	uploader := NewGiteaLocalUploader(ctx, doer, "user2", repo.Name)
+	uploader.gitServiceType = structs.GithubService
+	uploader.repo = repo
+	var err error
+	uploader.gitRepo, err = gitrepo.OpenRepository(ctx, repo)
+	require.NoError(t, err)
+	defer uploader.Close()
+	require.NoError(t, uploader.loadExistingLabelsAndMilestones(ctx))
+
+	watermarkUnix, err := issues_model.GetMaxIssueUpdatedUnix(ctx, repo.ID)
+	require.NoError(t, err)
+	watermark := time.Unix(watermarkUnix, 0)
+
+	updated := watermark.Add(time.Hour)
+	downloader := &syncTestDownloader{
+		issues: []*base.Issue{{
+			Number:       100,
+			Title:        "sync issue",
+			Content:      "created by sync",
+			PosterID:     9990,
+			PosterName:   "external-user",
+			State:        "open",
+			Created:      updated,
+			Updated:      updated,
+			ForeignIndex: 100,
+		}},
+		prs: []*base.PullRequest{{
+			Number:       101,
+			Title:        "sync pull request",
+			Content:      "created by sync",
+			PosterID:     9991,
+			PosterName:   "external-user",
+			State:        "open",
+			Created:      updated,
+			Updated:      updated,
+			ForeignIndex: 101,
+			EnsuredSafe:  true,
+			Head: base.PullRequestBranch{
+				Ref:       "unknown-branch",
+				SHA:       "e29fdd58dd8f8e6de2a44a5a1b18e196c43fd4b0",
+				RepoName:  repo.Name,
+				OwnerName: "deleted-user",
+			},
+			Base: base.PullRequestBranch{
+				Ref:       "master",
+				RepoName:  repo.Name,
+				OwnerName: "user2",
+			},
+		}},
+	}
+
+	opts := base.MigrateOptions{Issues: true, PullRequests: true}
+
+	issueCountBefore := unittest.GetCount(t, &issues_model.Issue{RepoID: repo.ID})
+
+	// the first sync inserts the new issue and pull request
+	require.NoError(t, syncRepository(ctx, downloader, uploader, opts, nil, watermark))
+
+	createdIssue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{RepoID: repo.ID, Index: 100})
+	assert.Equal(t, "sync issue", createdIssue.Title)
+	createdPRIssue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{RepoID: repo.ID, Index: 101})
+	assert.True(t, createdPRIssue.IsPull)
+	createdPR := unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{IssueID: createdPRIssue.ID})
+	assert.Equal(t, issueCountBefore+2, unittest.GetCount(t, &issues_model.Issue{RepoID: repo.ID}))
+
+	// a second sync of the same entities, one of them updated meanwhile, must
+	// update in place instead of duplicating anything
+	downloader.issues[0].Title = "sync issue retitled"
+	downloader.issues[0].Updated = updated.Add(time.Hour)
+	downloader.prs[0].State = "closed"
+	closed := updated.Add(time.Hour)
+	downloader.prs[0].Closed = &closed
+	downloader.prs[0].Updated = closed
+
+	require.NoError(t, syncRepository(ctx, downloader, uploader, opts, nil, watermark))
+
+	assert.Equal(t, issueCountBefore+2, unittest.GetCount(t, &issues_model.Issue{RepoID: repo.ID}))
+	afterIssue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{RepoID: repo.ID, Index: 100})
+	assert.Equal(t, createdIssue.ID, afterIssue.ID)
+	assert.Equal(t, "sync issue retitled", afterIssue.Title)
+	afterPRIssue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{RepoID: repo.ID, Index: 101})
+	assert.Equal(t, createdPRIssue.ID, afterPRIssue.ID)
+	assert.True(t, afterPRIssue.IsClosed)
+	afterPR := unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{IssueID: afterPRIssue.ID})
+	assert.Equal(t, createdPR.ID, afterPR.ID)
+	unittest.CheckConsistencyFor(t, &issues_model.Issue{}, &issues_model.PullRequest{})
 }
