@@ -993,6 +993,39 @@ func InsertPullRequests(ctx context.Context, prs ...*PullRequest) error {
 	})
 }
 
+// UpsertPullRequests inserts new pull requests and updates existing ones.
+// The pull request issues are matched on (repo_id, index), like UpsertIssues.
+func UpsertPullRequests(ctx context.Context, prs ...*PullRequest) error {
+	return db.WithTx(ctx, func(ctx context.Context) error {
+		sess := db.GetEngine(ctx)
+		for _, pr := range prs {
+			issueIsInsert, err := upsertIssue(ctx, pr.Issue)
+			if err != nil {
+				return err
+			}
+			pr.IssueID = pr.Issue.ID
+
+			if !issueIsInsert {
+				// load the id of the pull request row belonging to the existing issue
+				has, err := sess.Table("pull_request").Where("issue_id = ?", pr.IssueID).Cols("id").Get(&pr.ID)
+				if err != nil {
+					return err
+				}
+				if has {
+					if _, err := sess.NoAutoTime().ID(pr.ID).AllCols().Update(pr); err != nil {
+						return err
+					}
+					continue
+				}
+			}
+			if _, err := sess.NoAutoTime().Insert(pr); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // GetPullRequestByMergedCommit returns a merged pull request by the given commit
 func GetPullRequestByMergedCommit(ctx context.Context, repoID int64, sha string) (*PullRequest, error) {
 	pr := new(PullRequest)

@@ -45,6 +45,7 @@ func TestPullRequest(t *testing.T) {
 	t.Run("GetApprovers", testGetApprovers)
 	t.Run("GetPullRequestByMergedCommit", testGetPullRequestByMergedCommit)
 	t.Run("Migrate_InsertPullRequests", testMigrateInsertPullRequests)
+	t.Run("Migrate_UpsertPullRequests", testMigrateUpsertPullRequests)
 	t.Run("PullRequestsClosedRecentSortType", testPullRequestsClosedRecentSortType)
 	t.Run("LoadRequestedReviewers", testLoadRequestedReviewers)
 }
@@ -439,6 +440,66 @@ func testMigrateInsertPullRequests(t *testing.T) {
 	assert.NoError(t, err)
 
 	_ = unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{IssueID: i.ID})
+
+	unittest.CheckConsistencyFor(t, &issues_model.Issue{}, &issues_model.PullRequest{})
+}
+
+func testMigrateUpsertPullRequests(t *testing.T) {
+	assert.NoError(t, unittest.PrepareTestDatabase())
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{Name: "repo1"})
+	owner := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: repo.OwnerID})
+
+	pr := &issues_model.PullRequest{
+		HeadBranch: "feature",
+		BaseBranch: "master",
+		Index:      1002,
+		Issue: &issues_model.Issue{
+			RepoID:   repo.ID,
+			Repo:     repo,
+			Index:    1002,
+			Title:    "upsert pull request",
+			Content:  "original content",
+			IsPull:   true,
+			PosterID: owner.ID,
+			Poster:   owner,
+		},
+	}
+	assert.NoError(t, issues_model.UpsertPullRequests(t.Context(), pr))
+
+	createdIssue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{RepoID: repo.ID, Index: 1002})
+	createdPR := unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{IssueID: createdIssue.ID})
+	assert.False(t, createdPR.HasMerged)
+
+	// a second upsert of the same (repo_id, index) updates the existing
+	// issue and pull request rows instead of duplicating them
+	assert.NoError(t, issues_model.UpsertPullRequests(t.Context(), &issues_model.PullRequest{
+		HeadBranch:     "feature",
+		BaseBranch:     "master",
+		Index:          1002,
+		HasMerged:      true,
+		MergedCommitID: "1a8823cd1a9549fde083f992f6b9b87a7ab74fb3",
+		MergerID:       owner.ID,
+		Issue: &issues_model.Issue{
+			RepoID:   repo.ID,
+			Repo:     repo,
+			Index:    1002,
+			Title:    "upsert pull request",
+			Content:  "original content",
+			IsPull:   true,
+			IsClosed: true,
+			PosterID: owner.ID,
+			Poster:   owner,
+		},
+	}))
+
+	afterIssue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{RepoID: repo.ID, Index: 1002})
+	assert.Equal(t, createdIssue.ID, afterIssue.ID)
+	assert.True(t, afterIssue.IsClosed)
+
+	afterPR := unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{IssueID: afterIssue.ID})
+	assert.Equal(t, createdPR.ID, afterPR.ID)
+	assert.True(t, afterPR.HasMerged)
+	assert.Equal(t, "1a8823cd1a9549fde083f992f6b9b87a7ab74fb3", afterPR.MergedCommitID)
 
 	unittest.CheckConsistencyFor(t, &issues_model.Issue{}, &issues_model.PullRequest{})
 }

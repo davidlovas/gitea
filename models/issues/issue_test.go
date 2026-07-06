@@ -465,3 +465,55 @@ func TestMigrate_CreateIssuesIsPullFalse(t *testing.T) {
 func TestMigrate_CreateIssuesIsPullTrue(t *testing.T) {
 	assertCreateIssues(t, true)
 }
+
+func TestMigrate_UpsertIssues(t *testing.T) {
+	assert.NoError(t, unittest.PrepareTestDatabase())
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{Name: "repo1"})
+	owner := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: repo.OwnerID})
+	label1 := unittest.AssertExistsAndLoadBean(t, &issues_model.Label{ID: 1})
+	label2 := unittest.AssertExistsAndLoadBean(t, &issues_model.Label{ID: 2})
+
+	issue := &issues_model.Issue{
+		RepoID:    repo.ID,
+		Repo:      repo,
+		Index:     1001,
+		Title:     "upsert issue",
+		Content:   "original content",
+		PosterID:  owner.ID,
+		Poster:    owner,
+		Labels:    []*issues_model.Label{label1},
+		Reactions: []*issues_model.Reaction{{Type: "heart", UserID: owner.ID}},
+	}
+	assert.NoError(t, issues_model.UpsertIssues(t.Context(), issue))
+
+	created := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{RepoID: repo.ID, Index: 1001})
+	assert.Equal(t, "upsert issue", created.Title)
+	unittest.AssertExistsAndLoadBean(t, &issues_model.IssueLabel{IssueID: created.ID, LabelID: label1.ID})
+	unittest.AssertExistsAndLoadBean(t, &issues_model.Reaction{IssueID: created.ID, Type: "heart", UserID: owner.ID})
+
+	// a second upsert of the same (repo_id, index) updates in place instead of duplicating
+	assert.NoError(t, issues_model.UpsertIssues(t.Context(), &issues_model.Issue{
+		RepoID:    repo.ID,
+		Repo:      repo,
+		Index:     1001,
+		Title:     "upsert issue updated",
+		Content:   "updated content",
+		IsClosed:  true,
+		PosterID:  owner.ID,
+		Poster:    owner,
+		Labels:    []*issues_model.Label{label2},
+		Reactions: []*issues_model.Reaction{{Type: "+1", UserID: owner.ID}},
+	}))
+
+	after := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{RepoID: repo.ID, Index: 1001})
+	assert.Equal(t, created.ID, after.ID)
+	assert.Equal(t, "upsert issue updated", after.Title)
+	assert.Equal(t, "updated content", after.Content)
+	assert.True(t, after.IsClosed)
+
+	// labels and issue-level reactions are replaced with the new state
+	unittest.AssertExistsAndLoadBean(t, &issues_model.IssueLabel{IssueID: after.ID, LabelID: label2.ID})
+	unittest.AssertNotExistsBean(t, &issues_model.IssueLabel{IssueID: after.ID, LabelID: label1.ID})
+	unittest.AssertExistsAndLoadBean(t, &issues_model.Reaction{IssueID: after.ID, Type: "+1", UserID: owner.ID})
+	unittest.AssertNotExistsBean(t, &issues_model.Reaction{IssueID: after.ID, Type: "heart", UserID: owner.ID})
+}
