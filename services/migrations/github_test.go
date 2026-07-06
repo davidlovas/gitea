@@ -441,6 +441,57 @@ func TestGitHubDownloadRepo(t *testing.T) {
 	}, reviews)
 }
 
+func TestGitHubDownloadRepoIncrementalSync(t *testing.T) {
+	token := os.Getenv("GITHUB_READ_TOKEN")
+	liveMode := token != ""
+
+	_, callerFile, _, _ := runtime.Caller(0)
+	fixtureDir := filepath.Join(filepath.Dir(callerFile), "_mock_data/TestGitHubDownloadRepoIncrementalSync")
+	mockServer := unittest.NewMockWebServer(t, "https://api.github.com", fixtureDir, liveMode, unittest.MockServerOptions{
+		StripPrefix: "/api/v3",
+	})
+
+	GithubLimitRateRemaining = 3 // Wait at 3 remaining since we could have 3 CI in //
+	ctx := t.Context()
+	downloader, err := NewGithubDownloaderV3(ctx, mockServer.URL, "", "", token, "go-gitea", "test_repo")
+	require.NoError(t, err)
+	err = downloader.RefreshRate(ctx)
+	require.NoError(t, err)
+
+	assert.True(t, downloader.SupportSyncing())
+
+	// no issue has been updated after the recording date, so nothing is returned
+	issues, _, err := downloader.GetNewIssues(ctx, 1, 10, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC))
+	assert.NoError(t, err)
+	assert.Empty(t, issues)
+
+	// a watermark after issue 1's last update (2019-11-12 20:29:53) filters issue 1
+	// out and returns the remaining issues, without the pull requests
+	issues, isEnd, err := downloader.GetNewIssues(ctx, 1, 10, time.Date(2019, 11, 12, 21, 0, 0, 0, time.UTC))
+	assert.NoError(t, err)
+	assert.True(t, isEnd)
+	assert.Len(t, issues, 3)
+	assert.EqualValues(t, 2, issues[0].Number)
+	assert.EqualValues(t, 5, issues[1].Number)
+	assert.EqualValues(t, 6, issues[2].Number)
+
+	// only pull request 4 (updated 2025-03-16) qualifies; the updated-desc listing
+	// early-breaks at pull request 3 (updated 2019-11-12) and reports the end
+	prs, isEnd, err := downloader.GetNewPullRequests(ctx, 1, 2, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	assert.NoError(t, err)
+	assert.True(t, isEnd)
+	assert.Len(t, prs, 1)
+	assert.EqualValues(t, 4, prs[0].Number)
+
+	// a zero watermark returns all pull requests, most recently updated first
+	prs, isEnd, err = downloader.GetNewPullRequests(ctx, 1, 2, time.Time{})
+	assert.NoError(t, err)
+	assert.False(t, isEnd)
+	assert.Len(t, prs, 2)
+	assert.EqualValues(t, 4, prs[0].Number)
+	assert.EqualValues(t, 3, prs[1].Number)
+}
+
 func TestGithubMultiToken(t *testing.T) {
 	testCases := []struct {
 		desc             string
