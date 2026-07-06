@@ -129,6 +129,7 @@ type Review struct {
 	ReviewerTeam     *organization.Team `xorm:"-"`
 	OriginalAuthor   string
 	OriginalAuthorID int64
+	OriginalID       int64  `xorm:"INDEX"` // the review id on the remote source, only set for synced mirror reviews
 	Issue            *Issue `xorm:"-"`
 	IssueID          int64  `xorm:"index"`
 	Content          string `xorm:"TEXT"`
@@ -600,6 +601,24 @@ func DismissReview(ctx context.Context, review *Review, isDismiss bool) (err err
 	return err
 }
 
+// generateCommentFromReview builds the CommentTypeReview comment that mirrors a
+// review in the comment timeline. OriginalID ties it back to the same remote
+// review so a re-sync can recognise it.
+func generateCommentFromReview(review *Review) *Comment {
+	return &Comment{
+		Type:             CommentTypeReview,
+		Content:          review.Content,
+		PosterID:         review.ReviewerID,
+		OriginalAuthor:   review.OriginalAuthor,
+		OriginalAuthorID: review.OriginalAuthorID,
+		OriginalID:       review.OriginalID,
+		IssueID:          review.IssueID,
+		ReviewID:         review.ID,
+		CreatedUnix:      review.CreatedUnix,
+		UpdatedUnix:      review.UpdatedUnix,
+	}
+}
+
 // InsertReviews inserts review and review comments
 func InsertReviews(ctx context.Context, reviews []*Review) error {
 	return db.WithTx(ctx, func(ctx context.Context) error {
@@ -610,17 +629,7 @@ func InsertReviews(ctx context.Context, reviews []*Review) error {
 				return err
 			}
 
-			if _, err := sess.NoAutoTime().Insert(&Comment{
-				Type:             CommentTypeReview,
-				Content:          review.Content,
-				PosterID:         review.ReviewerID,
-				OriginalAuthor:   review.OriginalAuthor,
-				OriginalAuthorID: review.OriginalAuthorID,
-				IssueID:          review.IssueID,
-				ReviewID:         review.ID,
-				CreatedUnix:      review.CreatedUnix,
-				UpdatedUnix:      review.UpdatedUnix,
-			}); err != nil {
+			if _, err := sess.NoAutoTime().Insert(generateCommentFromReview(review)); err != nil {
 				return err
 			}
 
@@ -640,6 +649,73 @@ func InsertReviews(ctx context.Context, reviews []*Review) error {
 		}
 		return nil
 	})
+}
+
+// UpsertReviews inserts new reviews and updates existing ones, matching on the
+// remote review id (OriginalID). Used when syncing a migrated repository, where
+// every review carries a non-zero OriginalID.
+func UpsertReviews(ctx context.Context, reviews []*Review) error {
+	if len(reviews) == 0 {
+		return nil
+	}
+	return db.WithTx(ctx, func(ctx context.Context) error {
+		sess := db.GetEngine(ctx)
+
+		for _, review := range reviews {
+			existing := &Review{}
+			has, err := sess.Where("original_id = ?", review.OriginalID).Get(existing)
+			if err != nil {
+				return err
+			}
+			if !has {
+				if _, err := sess.NoAutoTime().Insert(review); err != nil {
+					return err
+				}
+			} else {
+				review.ID = existing.ID
+				if _, err := sess.NoAutoTime().ID(review.ID).AllCols().Update(review); err != nil {
+					return err
+				}
+			}
+
+			// the review mirrored into the comment timeline
+			if err := upsertReviewComment(sess, generateCommentFromReview(review)); err != nil {
+				return err
+			}
+
+			// the review's inline code comments
+			for _, c := range review.Comments {
+				c.ReviewID = review.ID
+				if err := upsertReviewComment(sess, c); err != nil {
+					return err
+				}
+			}
+
+			if err := UpdateIssueNumComments(ctx, review.IssueID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// upsertReviewComment inserts or updates a comment attached to a synced review,
+// matching on (issue_id, review_id, type, original_id) so a re-sync updates it
+// in place instead of duplicating it
+func upsertReviewComment(sess db.Engine, comment *Comment) error {
+	existing := &Comment{}
+	has, err := sess.Where("issue_id = ? AND review_id = ? AND `type` = ? AND original_id = ?",
+		comment.IssueID, comment.ReviewID, comment.Type, comment.OriginalID).Get(existing)
+	if err != nil {
+		return err
+	}
+	if !has {
+		_, err := sess.NoAutoTime().Insert(comment)
+		return err
+	}
+	comment.ID = existing.ID
+	_, err = sess.NoAutoTime().ID(comment.ID).AllCols().Update(comment)
+	return err
 }
 
 // AddReviewRequest add a review request from one reviewer

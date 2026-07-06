@@ -116,6 +116,54 @@ func TestMigrate_InsertIssueComments(t *testing.T) {
 	unittest.CheckConsistencyFor(t, &issues_model.Issue{})
 }
 
+func TestMigrate_UpsertIssueComments(t *testing.T) {
+	assert.NoError(t, unittest.PrepareTestDatabase())
+	issue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 1})
+	_ = issue.LoadRepo(t.Context())
+	owner := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: issue.Repo.OwnerID})
+
+	const originalID = 900001
+	comment := &issues_model.Comment{
+		PosterID:   owner.ID,
+		Poster:     owner,
+		IssueID:    issue.ID,
+		Issue:      issue,
+		Content:    "original synced content",
+		OriginalID: originalID,
+		Reactions:  []*issues_model.Reaction{{Type: "heart", UserID: owner.ID}},
+	}
+	assert.NoError(t, issues_model.UpsertIssueComments(t.Context(), []*issues_model.Comment{comment}))
+
+	created := unittest.AssertExistsAndLoadBean(t, &issues_model.Comment{IssueID: issue.ID, OriginalID: originalID})
+	assert.Equal(t, "original synced content", created.Content)
+	unittest.AssertExistsAndLoadBean(t, &issues_model.Reaction{CommentID: created.ID, Type: "heart", UserID: owner.ID})
+	countAfterFirst := unittest.GetCount(t, &issues_model.Comment{IssueID: issue.ID, OriginalID: originalID})
+	assert.Equal(t, 1, countAfterFirst)
+
+	// a second upsert of the same OriginalID updates in place instead of duplicating,
+	// and the reaction attaches to the existing comment (not a phantom comment 0)
+	assert.NoError(t, issues_model.UpsertIssueComments(t.Context(), []*issues_model.Comment{{
+		PosterID:   owner.ID,
+		Poster:     owner,
+		IssueID:    issue.ID,
+		Issue:      issue,
+		Content:    "edited synced content",
+		OriginalID: originalID,
+		Reactions:  []*issues_model.Reaction{{Type: "+1", UserID: owner.ID}},
+	}}))
+
+	assert.Equal(t, 1, unittest.GetCount(t, &issues_model.Comment{IssueID: issue.ID, OriginalID: originalID}))
+	after := unittest.AssertExistsAndLoadBean(t, &issues_model.Comment{IssueID: issue.ID, OriginalID: originalID})
+	assert.Equal(t, created.ID, after.ID)
+	assert.Equal(t, "edited synced content", after.Content)
+	// the new reaction attached to the existing comment row, not a phantom comment 0
+	// (which was the #20311 bug: the update path never loaded the comment id)
+	assert.Equal(t, after.ID, created.ID)
+	unittest.AssertExistsAndLoadBean(t, &issues_model.Reaction{CommentID: after.ID, Type: "+1", UserID: owner.ID})
+
+	unittest.CheckConsistencyFor(t, &issues_model.Issue{})
+}
+
 func Test_UpdateIssueNumComments(t *testing.T) {
 	assert.NoError(t, unittest.PrepareTestDatabase())
 	issue2 := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 2})

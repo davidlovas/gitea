@@ -258,6 +258,7 @@ type Comment struct {
 	Poster           *user_model.User `xorm:"-"`
 	OriginalAuthor   string
 	OriginalAuthorID int64
+	OriginalID       int64  `xorm:"INDEX"` // the comment id on the remote source, only set for synced mirror comments
 	IssueID          int64  `xorm:"INDEX"`
 	Issue            *Issue `xorm:"-"`
 	LabelID          int64
@@ -1349,4 +1350,77 @@ func InsertIssueComments(ctx context.Context, comments []*Comment) error {
 		}
 		return nil
 	})
+}
+
+// UpsertIssueComments inserts new comments and updates existing ones, matching
+// on the remote comment id (OriginalID). It is used when syncing a migrated
+// repository, where every comment carries a non-zero OriginalID, so a re-sync
+// updates comments in place instead of duplicating them.
+func UpsertIssueComments(ctx context.Context, comments []*Comment) error {
+	if len(comments) == 0 {
+		return nil
+	}
+
+	issueIDs := container.FilterSlice(comments, func(comment *Comment) (int64, bool) {
+		return comment.IssueID, true
+	})
+
+	return db.WithTx(ctx, func(ctx context.Context) error {
+		sess := db.GetEngine(ctx)
+		for _, comment := range comments {
+			existing := &Comment{}
+			has, err := sess.Where("issue_id = ? AND original_id = ?", comment.IssueID, comment.OriginalID).Get(existing)
+			if err != nil {
+				return err
+			}
+			if !has {
+				if _, err := sess.NoAutoTime().Insert(comment); err != nil {
+					return err
+				}
+			} else {
+				// carry the existing row id so the update targets it and the
+				// reactions below attach to the right comment
+				comment.ID = existing.ID
+				if _, err := sess.NoAutoTime().ID(comment.ID).AllCols().Update(comment); err != nil {
+					return err
+				}
+			}
+
+			if err := upsertCommentReactions(sess, comment); err != nil {
+				return err
+			}
+		}
+
+		for _, issueID := range issueIDs {
+			if err := UpdateIssueNumComments(ctx, issueID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// upsertCommentReactions inserts or updates a synced comment's reactions,
+// matching on the reaction's natural key (issue_id, comment_id, type)
+func upsertCommentReactions(sess db.Engine, comment *Comment) error {
+	for _, reaction := range comment.Reactions {
+		reaction.IssueID = comment.IssueID
+		reaction.CommentID = comment.ID
+		existing := &Reaction{}
+		has, err := sess.Where("issue_id = ? AND comment_id = ? AND type = ?", reaction.IssueID, reaction.CommentID, reaction.Type).Get(existing)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := sess.Insert(reaction); err != nil {
+				return err
+			}
+		} else {
+			reaction.ID = existing.ID
+			if _, err := sess.ID(reaction.ID).AllCols().Update(reaction); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

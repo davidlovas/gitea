@@ -118,6 +118,45 @@ func TestCreateReview(t *testing.T) {
 	unittest.AssertExistsAndLoadBean(t, &issues_model.Review{Content: "New Review"})
 }
 
+func TestMigrate_UpsertReviews(t *testing.T) {
+	assert.NoError(t, unittest.PrepareTestDatabase())
+
+	issue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 2})
+	reviewer := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 1})
+
+	const originalID = 800001
+	review := &issues_model.Review{
+		Type:       issues_model.ReviewTypeApprove,
+		IssueID:    issue.ID,
+		ReviewerID: reviewer.ID,
+		Content:    "looks good",
+		OriginalID: originalID,
+	}
+	assert.NoError(t, issues_model.UpsertReviews(t.Context(), []*issues_model.Review{review}))
+
+	created := unittest.AssertExistsAndLoadBean(t, &issues_model.Review{IssueID: issue.ID, OriginalID: originalID})
+	assert.Equal(t, "looks good", created.Content)
+	// the review is mirrored into the comment timeline exactly once
+	assert.Equal(t, 1, unittest.GetCount(t, &issues_model.Comment{ReviewID: created.ID, OriginalID: originalID, Type: issues_model.CommentTypeReview}))
+
+	// a second upsert of the same OriginalID updates the review and its mirrored
+	// comment in place rather than duplicating either
+	assert.NoError(t, issues_model.UpsertReviews(t.Context(), []*issues_model.Review{{
+		Type:       issues_model.ReviewTypeReject,
+		IssueID:    issue.ID,
+		ReviewerID: reviewer.ID,
+		Content:    "changes requested",
+		OriginalID: originalID,
+	}}))
+
+	assert.Equal(t, 1, unittest.GetCount(t, &issues_model.Review{IssueID: issue.ID, OriginalID: originalID}))
+	after := unittest.AssertExistsAndLoadBean(t, &issues_model.Review{IssueID: issue.ID, OriginalID: originalID})
+	assert.Equal(t, created.ID, after.ID)
+	assert.Equal(t, issues_model.ReviewTypeReject, after.Type)
+	assert.Equal(t, "changes requested", after.Content)
+	assert.Equal(t, 1, unittest.GetCount(t, &issues_model.Comment{ReviewID: after.ID, OriginalID: originalID, Type: issues_model.CommentTypeReview}))
+}
+
 func TestGetReviewersByIssueID(t *testing.T) {
 	assert.NoError(t, unittest.PrepareTestDatabase())
 
