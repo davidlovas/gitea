@@ -421,6 +421,7 @@ func prepareMigrationTasks() []*migration {
 		newMigration(341, "Convert legacy MSSQL DATETIME columns to DATETIME2", v1_27.FixLegacyMSSQLDateTimeColumns),
 		newMigration(342, "Add scoped workflows schema", v1_27.AddScopedWorkflowsSchema),
 		newMigration(343, "Add original_id column to comment and review for incremental mirror sync", v1_27.AddOriginalIDToCommentAndReview),
+		newMigration(344, "Add metadata sync options to mirror", v1_27.AddMetadataSyncOptionsToMirror),
 	}
 	return preparedMigrations
 }

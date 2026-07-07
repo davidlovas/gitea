@@ -6,6 +6,7 @@ package mirror
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"gitea.dev/modules/globallock"
 	"gitea.dev/modules/lfs"
 	"gitea.dev/modules/log"
+	"gitea.dev/modules/migration"
 	"gitea.dev/modules/process"
 	"gitea.dev/modules/proxy"
 	repo_module "gitea.dev/modules/repository"
@@ -266,6 +268,59 @@ func getRepoPullMirrorLockKey(repoID int64) string {
 	return fmt.Sprintf("repo_pull_mirror_%d", repoID)
 }
 
+// syncsMetadata reports whether any metadata entity is enabled for this mirror.
+func syncsMetadata(m *repo_model.Mirror) bool {
+	return m.SyncIssues || m.SyncPullRequests || m.SyncComments ||
+		m.SyncMilestones || m.SyncLabels || m.SyncReleases || m.SyncWiki
+}
+
+// runSyncMetadata keeps the mirror's enabled metadata entities (issues, pull
+// requests, comments, reviews, ...) current from its remote source, on top of
+// the git content synced by runSync. It returns true on success.
+func runSyncMetadata(ctx context.Context, m *repo_model.Mirror) bool {
+	repo := m.GetRepository(ctx)
+
+	remoteAddr, err := git.GetRemoteAddress(ctx, repo.RepoPath(), m.GetRemoteName())
+	if err != nil {
+		log.Error("SyncMirrors [repo: %-v]: unable to get remote address: %v", m.Repo, err)
+		return false
+	}
+	remoteURL, err := url.Parse(remoteAddr)
+	if err != nil {
+		log.Error("SyncMirrors [repo: %-v]: unable to parse remote address: %v", m.Repo, err)
+		return false
+	}
+	password, _ := remoteURL.User.Password()
+
+	opts := migration.MigrateOptions{
+		CloneAddr:       repo.OriginalURL,
+		AuthUsername:    remoteURL.User.Username(),
+		AuthPassword:    password,
+		UID:             int(repo.OwnerID),
+		RepoName:        repo.Name,
+		Mirror:          true,
+		LFS:             m.LFS,
+		LFSEndpoint:     m.LFSEndpoint,
+		GitServiceType:  repo.OriginalServiceType,
+		OriginalURL:     repo.OriginalURL,
+		Wiki:            m.SyncWiki && repo_service.HasWiki(ctx, repo),
+		Issues:          m.SyncIssues,
+		Milestones:      m.SyncMilestones,
+		Labels:          m.SyncLabels,
+		Releases:        m.SyncReleases,
+		Comments:        m.SyncComments,
+		PullRequests:    m.SyncPullRequests,
+		MigrateToRepoID: repo.ID,
+		MirrorInterval:  m.Interval.String(),
+	}
+
+	if _, err := migrations.SyncRepository(ctx, repo.MustOwner(ctx), repo, opts, nil); err != nil {
+		log.Error("SyncMirrors [repo: %-v]: failed to sync metadata: %v", m.Repo, err)
+		return false
+	}
+	return true
+}
+
 // SyncPullMirror starts the sync of the pull mirror and schedules the next run.
 func SyncPullMirror(ctx context.Context, repoID int64) bool {
 	log.Trace("SyncMirrors [repo_id: %v]", repoID)
@@ -302,6 +357,16 @@ func SyncPullMirror(ctx context.Context, repoID int64) bool {
 			log.Error("SyncMirrors [repo: %-v]: failed to TouchMirror: %v", m.Repo, err)
 		}
 		return false
+	}
+
+	if syncsMetadata(m) {
+		log.Trace("SyncMirrors [repo: %-v]: Running metadata sync", m.Repo)
+		if ok := runSyncMetadata(ctx, m); !ok {
+			if err = repo_model.TouchMirror(ctx, m); err != nil {
+				log.Error("SyncMirrors [repo: %-v]: failed to TouchMirror: %v", m.Repo, err)
+			}
+			return false
+		}
 	}
 
 	log.Trace("SyncMirrors [repo: %-v]: Scheduling next update", m.Repo)

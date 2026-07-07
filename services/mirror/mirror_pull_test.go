@@ -6,8 +6,19 @@ package mirror
 import (
 	"testing"
 
+	repo_model "gitea.dev/models/repo"
+
 	"github.com/stretchr/testify/assert"
 )
+
+func Test_syncsMetadata(t *testing.T) {
+	assert.False(t, syncsMetadata(&repo_model.Mirror{}), "a git-only mirror does not sync metadata")
+	assert.True(t, syncsMetadata(&repo_model.Mirror{SyncIssues: true}))
+	assert.True(t, syncsMetadata(&repo_model.Mirror{SyncPullRequests: true}))
+	assert.True(t, syncsMetadata(&repo_model.Mirror{SyncComments: true}))
+	assert.True(t, syncsMetadata(&repo_model.Mirror{SyncReleases: true}))
+	assert.True(t, syncsMetadata(&repo_model.Mirror{SyncWiki: true}))
+}
 
 func Test_checkRecoverableSyncError(t *testing.T) {
 	cases := []struct {
