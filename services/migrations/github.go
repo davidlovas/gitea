@@ -510,6 +510,12 @@ func (g *GithubDownloaderV3) GetComments(ctx context.Context, commentable base.C
 }
 
 func (g *GithubDownloaderV3) getComments(ctx context.Context, commentable base.Commentable) ([]*base.Comment, error) {
+	return g.getCommentsSince(ctx, commentable, nil)
+}
+
+// getCommentsSince returns an issue's or pull request's comments; a non-nil
+// since returns only those updated at or after it
+func (g *GithubDownloaderV3) getCommentsSince(ctx context.Context, commentable base.Commentable, since *time.Time) ([]*base.Comment, error) {
 	var (
 		allComments = make([]*base.Comment, 0, g.maxPerPage)
 		created     = "created"
@@ -518,6 +524,7 @@ func (g *GithubDownloaderV3) getComments(ctx context.Context, commentable base.C
 	opt := &github.IssueListCommentsOptions{
 		Sort:      &created,
 		Direction: &asc,
+		Since:     since,
 		ListOptions: github.ListOptions{
 			PerPage: g.maxPerPage,
 		},
@@ -580,6 +587,12 @@ func (g *GithubDownloaderV3) getComments(ctx context.Context, commentable base.C
 
 // GetAllComments returns repository comments according page and perPageSize
 func (g *GithubDownloaderV3) GetAllComments(ctx context.Context, page, perPage int) ([]*base.Comment, bool, error) {
+	return g.getAllCommentsSince(ctx, page, perPage, nil)
+}
+
+// getAllCommentsSince returns all repository issue and pull request comments
+// paginated; a non-nil since returns only those updated at or after it
+func (g *GithubDownloaderV3) getAllCommentsSince(ctx context.Context, page, perPage int, since *time.Time) ([]*base.Comment, bool, error) {
 	var (
 		allComments = make([]*base.Comment, 0, perPage)
 		created     = "created"
@@ -591,6 +604,7 @@ func (g *GithubDownloaderV3) GetAllComments(ctx context.Context, page, perPage i
 	opt := &github.IssueListCommentsOptions{
 		Sort:      &created,
 		Direction: &asc,
+		Since:     since,
 		ListOptions: github.ListOptions{
 			Page:    page,
 			PerPage: perPage,
@@ -876,6 +890,25 @@ func (g *GithubDownloaderV3) convertGithubReviewComments(ctx context.Context, cs
 }
 
 // GetReviews returns pull requests review
+// GetNewComments returns an issue's or pull request's comments updated at or
+// after the given time
+func (g *GithubDownloaderV3) GetNewComments(ctx context.Context, commentable base.Commentable, updatedAfter time.Time) ([]*base.Comment, bool, error) {
+	comments, err := g.getCommentsSince(ctx, commentable, &updatedAfter)
+	return comments, false, err
+}
+
+// GetAllNewComments returns all repository comments updated at or after the
+// given time, paginated
+func (g *GithubDownloaderV3) GetAllNewComments(ctx context.Context, page, perPage int, updatedAfter time.Time) ([]*base.Comment, bool, error) {
+	return g.getAllCommentsSince(ctx, page, perPage, &updatedAfter)
+}
+
+// GetNewReviews returns a pull request's reviews updated at or after the given
+// time. GitHub's reviews API has no since filter, so all reviews are refetched.
+func (g *GithubDownloaderV3) GetNewReviews(ctx context.Context, reviewable base.Reviewable, updatedAfter time.Time) ([]*base.Review, error) {
+	return g.GetReviews(ctx, reviewable)
+}
+
 func (g *GithubDownloaderV3) GetReviews(ctx context.Context, reviewable base.Reviewable) ([]*base.Review, error) {
 	allReviews := make([]*base.Review, 0, g.maxPerPage)
 	if g.SkipReviews {

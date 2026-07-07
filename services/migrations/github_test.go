@@ -490,6 +490,20 @@ func TestGitHubDownloadRepoIncrementalSync(t *testing.T) {
 	assert.Len(t, prs, 2)
 	assert.EqualValues(t, 4, prs[0].Number)
 	assert.EqualValues(t, 3, prs[1].Number)
+
+	// repo-wide comments updated after a recent watermark: none
+	comments, _, err := downloader.GetAllNewComments(ctx, 1, 100, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC))
+	assert.NoError(t, err)
+	assert.Empty(t, comments)
+
+	// repo-wide comments since the epoch: every migrated comment carries its
+	// GitHub id in Index, which becomes the dedup key on the Gitea side
+	comments, _, err = downloader.GetAllNewComments(ctx, 1, 100, time.Unix(1, 0))
+	assert.NoError(t, err)
+	assert.NotEmpty(t, comments)
+	for _, comment := range comments {
+		assert.NotZero(t, comment.Index, "every synced comment must carry its remote id")
+	}
 }
 
 func TestGithubMultiToken(t *testing.T) {

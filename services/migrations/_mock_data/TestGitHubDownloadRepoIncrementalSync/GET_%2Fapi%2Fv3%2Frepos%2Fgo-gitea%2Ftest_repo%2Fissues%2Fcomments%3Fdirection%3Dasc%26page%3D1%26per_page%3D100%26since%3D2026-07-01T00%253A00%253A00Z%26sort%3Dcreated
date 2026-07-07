@@ -13,14 +13,14 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: deny
 X-Github-Api-Version-Selected: 2022-11-28
 X-Github-Media-Type: github.v3; param=squirrel-girl-preview
-X-Github-Request-Id: DF39:1BB05A:C84182:2BB5DC9:6A4C3BDA
+X-Github-Request-Id: DF39:1BB05A:C85279:2BB97CB:6A4C3BDD
 X-Oauth-Client-Id: 178c6fc778ccc68e1d6a
 X-Oauth-Scopes: admin:gpg_key, admin:org, admin:org_hook, admin:public_key, delete_repo, gist, repo, user
 X-Ratelimit-Limit: 5000
-X-Ratelimit-Remaining: 4992
+X-Ratelimit-Remaining: 4988
 X-Ratelimit-Reset: 1783382388
 X-Ratelimit-Resource: core
-X-Ratelimit-Used: 8
+X-Ratelimit-Used: 12
 X-Xss-Protection: 0
 
 []
