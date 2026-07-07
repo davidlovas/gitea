@@ -587,6 +587,9 @@ func syncRepository(ctx context.Context, downloader base.Downloader, uploader ba
 		}
 	}
 
+	// pull requests updated since the watermark, kept so their reviews (which
+	// GitHub cannot filter by time) are only refetched for what changed
+	var syncedPRs []*base.PullRequest
 	if opts.PullRequests {
 		log.Trace("syncing pull requests")
 		messenger("repo.migrate.syncing_pulls")
@@ -605,9 +608,66 @@ func syncRepository(ctx context.Context, downloader base.Downloader, uploader ba
 			if err := uploader.PatchPullRequests(ctx, prs...); err != nil {
 				return err
 			}
+			syncedPRs = append(syncedPRs, prs...)
 
 			if isEnd {
 				break
+			}
+		}
+	}
+
+	if opts.Comments {
+		log.Trace("syncing comments")
+		messenger("repo.migrate.syncing_comments")
+		commentBatchSize := uploader.MaxBatchInsertSize("comment")
+
+		for i := 1; ; i++ {
+			comments, isEnd, err := downloader.GetAllNewComments(ctx, i, commentBatchSize, updatedAfter)
+			if err != nil {
+				if !base.IsErrNotSupported(err) {
+					return err
+				}
+				log.Warn("syncing comments is not supported, ignored")
+				break
+			}
+
+			if err := uploader.PatchComments(ctx, comments...); err != nil {
+				return err
+			}
+
+			if isEnd {
+				break
+			}
+		}
+	}
+
+	if opts.PullRequests {
+		log.Trace("syncing reviews")
+		messenger("repo.migrate.syncing_reviews")
+		reviewBatchSize := uploader.MaxBatchInsertSize("review")
+
+		reviews := make([]*base.Review, 0, reviewBatchSize)
+		for _, pr := range syncedPRs {
+			prReviews, err := downloader.GetNewReviews(ctx, pr, updatedAfter)
+			if err != nil {
+				if !base.IsErrNotSupported(err) {
+					return err
+				}
+				log.Warn("syncing reviews is not supported, ignored")
+				break
+			}
+			reviews = append(reviews, prReviews...)
+
+			if len(reviews) >= reviewBatchSize {
+				if err := uploader.PatchReviews(ctx, reviews...); err != nil {
+					return err
+				}
+				reviews = reviews[:0]
+			}
+		}
+		if len(reviews) > 0 {
+			if err := uploader.PatchReviews(ctx, reviews...); err != nil {
+				return err
 			}
 		}
 	}

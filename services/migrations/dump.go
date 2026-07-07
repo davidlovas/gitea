@@ -375,6 +375,16 @@ func (g *RepositoryDumper) PatchPullRequests(_ context.Context, _ ...*base.PullR
 	return base.ErrNotSupported{Entity: "PatchPullRequests"}
 }
 
+// PatchComments is not supported: a dump is one-shot, it has nothing to update
+func (g *RepositoryDumper) PatchComments(_ context.Context, _ ...*base.Comment) error {
+	return base.ErrNotSupported{Entity: "PatchComments"}
+}
+
+// PatchReviews is not supported: a dump is one-shot, it has nothing to update
+func (g *RepositoryDumper) PatchReviews(_ context.Context, _ ...*base.Review) error {
+	return base.ErrNotSupported{Entity: "PatchReviews"}
+}
+
 // CreateIssues creates issues
 func (g *RepositoryDumper) CreateIssues(_ context.Context, issues ...*base.Issue) error {
 	var err error

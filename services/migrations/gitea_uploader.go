@@ -490,14 +490,53 @@ func (g *GiteaLocalUploader) prepareIssues(ctx context.Context, issues ...*base.
 	return iss, nil
 }
 
+// getIssueByIndex returns a migrated issue by its index, using the in-run cache
+// first and falling back to the database. The fallback lets a sync attach
+// comments and reviews to issues imported by an earlier migration, which are
+// not in this run's cache.
+func (g *GiteaLocalUploader) getIssueByIndex(ctx context.Context, index int64) (*issues_model.Issue, error) {
+	if issue, ok := g.issues[index]; ok {
+		return issue, nil
+	}
+	issue, err := issues_model.GetIssueByIndex(ctx, g.repo.ID, index)
+	if err != nil {
+		return nil, err
+	}
+	g.issues[index] = issue
+	return issue, nil
+}
+
 // CreateComments creates comments of issues
 func (g *GiteaLocalUploader) CreateComments(ctx context.Context, comments ...*base.Comment) error {
+	cms, err := g.prepareComments(ctx, comments...)
+	if err != nil {
+		return err
+	}
+	if len(cms) == 0 {
+		return nil
+	}
+	return issues_model.InsertIssueComments(ctx, cms)
+}
+
+// PatchComments upserts comments of issues: existing comments, matched on their
+// remote id, are updated in place and new ones are created
+func (g *GiteaLocalUploader) PatchComments(ctx context.Context, comments ...*base.Comment) error {
+	cms, err := g.prepareComments(ctx, comments...)
+	if err != nil {
+		return err
+	}
+	if len(cms) == 0 {
+		return nil
+	}
+	return issues_model.UpsertIssueComments(ctx, cms)
+}
+
+func (g *GiteaLocalUploader) prepareComments(ctx context.Context, comments ...*base.Comment) ([]*issues_model.Comment, error) {
 	cms := make([]*issues_model.Comment, 0, len(comments))
 	for _, comment := range comments {
-		var issue *issues_model.Issue
-		issue, ok := g.issues[comment.IssueIndex]
-		if !ok {
-			return fmt.Errorf("comment references non existent IssueIndex %d", comment.IssueIndex)
+		issue, err := g.getIssueByIndex(ctx, comment.IssueIndex)
+		if err != nil {
+			return nil, err
 		}
 
 		if comment.Created.IsZero() {
@@ -514,6 +553,7 @@ func (g *GiteaLocalUploader) CreateComments(ctx context.Context, comments ...*ba
 			IssueID:     issue.ID,
 			Type:        issues_model.AsCommentType(comment.CommentType),
 			Content:     comment.Content,
+			OriginalID:  comment.Index,
 			CreatedUnix: timeutil.TimeStamp(comment.Created.Unix()),
 			UpdatedUnix: timeutil.TimeStamp(comment.Updated.Unix()),
 		}
@@ -551,7 +591,7 @@ func (g *GiteaLocalUploader) CreateComments(ctx context.Context, comments ...*ba
 		}
 
 		if err := g.remapUser(ctx, comment, &cm); err != nil {
-			return err
+			return nil, err
 		}
 
 		// add reactions
@@ -561,7 +601,7 @@ func (g *GiteaLocalUploader) CreateComments(ctx context.Context, comments ...*ba
 				CreatedUnix: timeutil.TimeStampNow(),
 			}
 			if err := g.remapUser(ctx, reaction, &res); err != nil {
-				return err
+				return nil, err
 			}
 			cm.Reactions = append(cm.Reactions, &res)
 		}
@@ -569,10 +609,7 @@ func (g *GiteaLocalUploader) CreateComments(ctx context.Context, comments ...*ba
 		cms = append(cms, &cm)
 	}
 
-	if len(cms) == 0 {
-		return nil
-	}
-	return issues_model.InsertIssueComments(ctx, cms)
+	return cms, nil
 }
 
 // CreatePullRequests creates pull requests
@@ -920,12 +957,29 @@ func convertReviewState(state string) issues_model.ReviewType {
 
 // CreateReviews create pull request reviews of currently migrated issues
 func (g *GiteaLocalUploader) CreateReviews(ctx context.Context, reviews ...*base.Review) error {
+	cms, err := g.prepareReviews(ctx, reviews...)
+	if err != nil {
+		return err
+	}
+	return issues_model.InsertReviews(ctx, cms)
+}
+
+// PatchReviews upserts pull request reviews: existing reviews, matched on their
+// remote id, are updated in place and new ones are created
+func (g *GiteaLocalUploader) PatchReviews(ctx context.Context, reviews ...*base.Review) error {
+	cms, err := g.prepareReviews(ctx, reviews...)
+	if err != nil {
+		return err
+	}
+	return issues_model.UpsertReviews(ctx, cms)
+}
+
+func (g *GiteaLocalUploader) prepareReviews(ctx context.Context, reviews ...*base.Review) ([]*issues_model.Review, error) {
 	cms := make([]*issues_model.Review, 0, len(reviews))
 	for _, review := range reviews {
-		var issue *issues_model.Issue
-		issue, ok := g.issues[review.IssueIndex]
-		if !ok {
-			return fmt.Errorf("review references non existent IssueIndex %d", review.IssueIndex)
+		issue, err := g.getIssueByIndex(ctx, review.IssueIndex)
+		if err != nil {
+			return nil, err
 		}
 		if review.CreatedAt.IsZero() {
 			review.CreatedAt = time.Unix(int64(issue.CreatedUnix), 0)
@@ -936,12 +990,13 @@ func (g *GiteaLocalUploader) CreateReviews(ctx context.Context, reviews ...*base
 			IssueID:     issue.ID,
 			Content:     review.Content,
 			Official:    review.Official,
+			OriginalID:  review.ID,
 			CreatedUnix: timeutil.TimeStamp(review.CreatedAt.Unix()),
 			UpdatedUnix: timeutil.TimeStamp(review.CreatedAt.Unix()),
 		}
 
 		if err := g.remapUser(ctx, review, &cm); err != nil {
-			return err
+			return nil, err
 		}
 
 		cms = append(cms, &cm)
@@ -952,7 +1007,7 @@ func (g *GiteaLocalUploader) CreateReviews(ctx context.Context, reviews ...*base
 			var err error
 			pr, err = issues_model.GetPullRequestByIssueIDWithNoAttributes(ctx, issue.ID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			g.prCache[issue.ID] = pr
 		}
@@ -1005,19 +1060,20 @@ func (g *GiteaLocalUploader) CreateReviews(ctx context.Context, reviews ...*base
 				TreePath:    comment.TreePath,
 				CommitSHA:   comment.CommitID,
 				Patch:       patch,
+				OriginalID:  comment.ID,
 				CreatedUnix: timeutil.TimeStamp(comment.CreatedAt.Unix()),
 				UpdatedUnix: timeutil.TimeStamp(comment.UpdatedAt.Unix()),
 			}
 
 			if err := g.remapUser(ctx, review, &c); err != nil {
-				return err
+				return nil, err
 			}
 
 			cm.Comments = append(cm.Comments, &c)
 		}
 	}
 
-	return issues_model.InsertReviews(ctx, cms)
+	return cms, nil
 }
 
 // Rollback when migrating failed, this will rollback all the changes.

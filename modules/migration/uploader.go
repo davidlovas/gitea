@@ -25,6 +25,10 @@ type Uploader interface {
 	PatchIssues(ctx context.Context, issues ...*Issue) error
 	// PatchPullRequests upserts pull requests, like PatchIssues
 	PatchPullRequests(ctx context.Context, prs ...*PullRequest) error
+	// PatchComments upserts comments, matched on their remote id
+	PatchComments(ctx context.Context, comments ...*Comment) error
+	// PatchReviews upserts pull request reviews, matched on their remote id
+	PatchReviews(ctx context.Context, reviews ...*Review) error
 	Rollback() error
 	Finish(ctx context.Context) error
 	Close()
