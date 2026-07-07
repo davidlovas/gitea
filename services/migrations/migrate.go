@@ -544,7 +544,16 @@ func SyncRepository(ctx context.Context, doer *user_model.User, repo *repo_model
 		return nil, err
 	}
 
-	if err := syncRepository(ctx, downloader, uploader, opts, messenger, time.Unix(watermark, 0)); err != nil {
+	// On the first sync there is no prior data, so fetch everything. This must
+	// be the zero time.Time (which downloaders omit from their query), NOT
+	// time.Unix(0, 0): the latter is sent to GitHub as since=1970-01-01, which
+	// its issues API rejects by returning no results.
+	var updatedAfter time.Time
+	if watermark > 0 {
+		updatedAfter = time.Unix(watermark, 0)
+	}
+
+	if err := syncRepository(ctx, downloader, uploader, opts, messenger, updatedAfter); err != nil {
 		// unlike a failed migration there is nothing to roll back: rolling
 		// back would delete the existing repository
 		if err2 := system_model.CreateRepositoryNotice(fmt.Sprintf("Sync repository (%s/%s) from %s failed: %v", repo.OwnerName, opts.RepoName, opts.OriginalURL, err)); err2 != nil {

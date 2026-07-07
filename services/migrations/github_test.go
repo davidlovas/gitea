@@ -506,6 +506,18 @@ func TestGitHubDownloadRepoIncrementalSync(t *testing.T) {
 	}
 }
 
+func Test_nilIfZero(t *testing.T) {
+	// a zero time must become nil so the comment API's `since` filter is omitted;
+	// a pointer to the zero time would be sent as since=0001-01-01 and GitHub 422s
+	assert.Nil(t, nilIfZero(time.Time{}))
+
+	now := time.Date(2026, 7, 6, 0, 0, 0, 0, time.UTC)
+	got := nilIfZero(now)
+	if assert.NotNil(t, got) {
+		assert.Equal(t, now, *got)
+	}
+}
+
 func TestGithubMultiToken(t *testing.T) {
 	testCases := []struct {
 		desc             string

@@ -890,17 +890,28 @@ func (g *GithubDownloaderV3) convertGithubReviewComments(ctx context.Context, cs
 }
 
 // GetReviews returns pull requests review
+// nilIfZero returns a pointer to t, or nil when t is the zero time. The comment
+// APIs take a *time.Time `since`; a pointer to the zero time would be serialized
+// as since=0001-01-01, which GitHub rejects with 422, so a zero time (first
+// sync, no watermark) must be sent as nil to omit the filter and fetch all.
+func nilIfZero(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
+}
+
 // GetNewComments returns an issue's or pull request's comments updated at or
 // after the given time
 func (g *GithubDownloaderV3) GetNewComments(ctx context.Context, commentable base.Commentable, updatedAfter time.Time) ([]*base.Comment, bool, error) {
-	comments, err := g.getCommentsSince(ctx, commentable, &updatedAfter)
+	comments, err := g.getCommentsSince(ctx, commentable, nilIfZero(updatedAfter))
 	return comments, false, err
 }
 
 // GetAllNewComments returns all repository comments updated at or after the
 // given time, paginated
 func (g *GithubDownloaderV3) GetAllNewComments(ctx context.Context, page, perPage int, updatedAfter time.Time) ([]*base.Comment, bool, error) {
-	return g.getAllCommentsSince(ctx, page, perPage, &updatedAfter)
+	return g.getAllCommentsSince(ctx, page, perPage, nilIfZero(updatedAfter))
 }
 
 // GetNewReviews returns a pull request's reviews updated at or after the given
