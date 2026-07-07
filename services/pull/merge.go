@@ -229,6 +229,13 @@ func Merge(ctx context.Context, pr *issues_model.PullRequest, doer *user_model.U
 		return fmt.Errorf("unable to load head repo: %w", err)
 	}
 
+	// a mirror that syncs its pull requests from a remote is read-only for them
+	if readOnly, err := pr.BaseRepo.IsMirrorWithMetadata(ctx); err != nil {
+		return err
+	} else if readOnly {
+		return repo_model.ErrReadOnlyMirror
+	}
+
 	prUnit, err := pr.BaseRepo.GetUnit(ctx, unit.TypePullRequests)
 	if err != nil {
 		log.Error("pr.BaseRepo.GetUnit(unit.TypePullRequests): %v", err)

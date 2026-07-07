@@ -1043,7 +1043,9 @@ func MergePullRequest(ctx *context.APIContext) {
 	}
 
 	if err := pull_service.Merge(ctx, pr, ctx.Doer, repo_model.MergeStyle(form.Do), form.HeadCommitID, message, false); err != nil {
-		if pull_service.IsErrInvalidMergeStyle(err) {
+		if errors.Is(err, util.ErrPermissionDenied) {
+			ctx.APIError(http.StatusForbidden, err.Error())
+		} else if pull_service.IsErrInvalidMergeStyle(err) {
 			ctx.APIError(http.StatusMethodNotAllowed, fmt.Sprintf("%s is not allowed an allowed merge style for this repository", repo_model.MergeStyle(form.Do)))
 		} else if pull_service.IsErrMergeConflicts(err) {
 			conflictError := err.(pull_service.ErrMergeConflicts)

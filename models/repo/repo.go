@@ -629,6 +629,17 @@ func (repo *Repository) AllowsPulls(ctx context.Context) bool {
 	return repo.CanEnablePulls() && repo.UnitEnabled(ctx, unit.TypePullRequests)
 }
 
+// CanShowPulls reports whether the pull requests unit may be displayed. That is
+// true for a normal repository eligible for pulls, and also for a mirror that
+// syncs pull requests from its remote — such a mirror shows them read-only.
+// The caller still checks read permission on the pull-requests unit.
+func (repo *Repository) CanShowPulls(ctx context.Context) (bool, error) {
+	if repo.CanEnablePulls() {
+		return true, nil
+	}
+	return repo.IsMirrorWithMetadata(ctx)
+}
+
 // IsMirrorWithMetadata reports whether this repository is a pull mirror that
 // keeps issue/pull-request metadata current from its remote source. Such a
 // mirror displays its synced issues and pull requests but is read-only for

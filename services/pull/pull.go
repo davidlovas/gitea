@@ -58,6 +58,14 @@ type NewPullRequestOptions struct {
 // NewPullRequest creates new pull request with labels for repository.
 func NewPullRequest(ctx context.Context, opts *NewPullRequestOptions) error {
 	repo, issue, labelIDs, uuids, pr, assigneeIDs := opts.Repo, opts.Issue, opts.LabelIDs, opts.AttachmentUUIDs, opts.PullRequest, opts.AssigneeIDs
+
+	// a mirror that syncs its pull requests from a remote is read-only for them
+	if readOnly, err := repo.IsMirrorWithMetadata(ctx); err != nil {
+		return err
+	} else if readOnly {
+		return repo_model.ErrReadOnlyMirror
+	}
+
 	if err := issue.LoadPoster(ctx); err != nil {
 		return err
 	}
