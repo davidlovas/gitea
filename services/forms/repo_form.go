@@ -109,6 +109,14 @@ type RepoSettingForm struct {
 	Template               bool
 	EnablePrune            bool
 
+	// Pull-mirror metadata sync toggles
+	MirrorSyncIssues       bool `form:"mirror_sync_issues"`
+	MirrorSyncPullRequests bool `form:"mirror_sync_pull_requests"`
+	MirrorSyncComments     bool `form:"mirror_sync_comments"`
+	MirrorSyncLabels       bool `form:"mirror_sync_labels"`
+	MirrorSyncMilestones   bool `form:"mirror_sync_milestones"`
+	MirrorSyncReleases     bool `form:"mirror_sync_releases"`
+
 	// Advanced settings
 	EnableCode bool
 

@@ -290,6 +290,12 @@ func handleSettingsPostMirror(ctx *context.Context) {
 
 	pullMirror.EnablePrune = form.EnablePrune
 	pullMirror.Interval = interval
+	pullMirror.SyncIssues = form.MirrorSyncIssues
+	pullMirror.SyncPullRequests = form.MirrorSyncPullRequests
+	pullMirror.SyncComments = form.MirrorSyncComments
+	pullMirror.SyncLabels = form.MirrorSyncLabels
+	pullMirror.SyncMilestones = form.MirrorSyncMilestones
+	pullMirror.SyncReleases = form.MirrorSyncReleases
 	pullMirror.ScheduleNextUpdate()
 	if err := repo_model.UpdateMirror(ctx, pullMirror); err != nil {
 		ctx.ServerError("UpdateMirror", err)
