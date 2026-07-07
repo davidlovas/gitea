@@ -12,6 +12,7 @@ import (
 
 	repo_model "gitea.dev/models/repo"
 	system_model "gitea.dev/models/system"
+	"gitea.dev/models/unit"
 	"gitea.dev/modules/cache"
 	"gitea.dev/modules/git"
 	"gitea.dev/modules/git/gitcmd"
@@ -318,7 +319,39 @@ func runSyncMetadata(ctx context.Context, m *repo_model.Mirror) bool {
 		log.Error("SyncMirrors [repo: %-v]: failed to sync metadata: %v", m.Repo, err)
 		return false
 	}
+
+	if err := enableMetadataUnits(ctx, m); err != nil {
+		log.Error("SyncMirrors [repo: %-v]: failed to enable metadata units: %v", m.Repo, err)
+		return false
+	}
 	return true
+}
+
+// enableMetadataUnits turns on the repository units whose content this mirror
+// syncs, so the synced issues and pull requests are displayed. The units are
+// enabled for display only; a synced mirror stays read-only for that content
+// (enforced in the permission layer, see Repository.IsMirrorWithMetadata).
+// Enabling is idempotent.
+func enableMetadataUnits(ctx context.Context, m *repo_model.Mirror) error {
+	repo := m.GetRepository(ctx)
+	if err := repo.LoadUnits(ctx); err != nil {
+		return err
+	}
+
+	var toEnable []repo_model.RepoUnit
+	wanted := map[unit.Type]bool{
+		unit.TypeIssues:       m.SyncIssues,
+		unit.TypePullRequests: m.SyncPullRequests,
+	}
+	for unitType, want := range wanted {
+		if want && !unitType.UnitGlobalDisabled() && !repo.UnitEnabled(ctx, unitType) {
+			toEnable = append(toEnable, repo_model.RepoUnit{RepoID: repo.ID, Type: unitType})
+		}
+	}
+	if len(toEnable) == 0 {
+		return nil
+	}
+	return repo_service.UpdateRepositoryUnits(ctx, repo, toEnable, nil)
 }
 
 // SyncPullMirror starts the sync of the pull mirror and schedules the next run.

@@ -24,6 +24,13 @@ import (
 
 // NewIssue creates new issue with labels for repository.
 func NewIssue(ctx context.Context, repo *repo_model.Repository, issue *issues_model.Issue, labelIDs []int64, uuids []string, assigneeIDs, projectIDs []int64) error {
+	// a mirror that syncs its issues from a remote is read-only for them
+	if readOnly, err := repo.IsMirrorWithMetadata(ctx); err != nil {
+		return err
+	} else if readOnly {
+		return repo_model.ErrReadOnlyMirror
+	}
+
 	if err := issue.LoadPoster(ctx); err != nil {
 		return err
 	}

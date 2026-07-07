@@ -60,6 +60,13 @@ func CreateRefComment(ctx context.Context, doer *user_model.User, repo *repo_mod
 
 // CreateIssueComment creates a plain issue comment.
 func CreateIssueComment(ctx context.Context, doer *user_model.User, repo *repo_model.Repository, issue *issues_model.Issue, content string, attachments []string) (*issues_model.Comment, error) {
+	// a mirror that syncs its issues/pulls from a remote is read-only for their comments
+	if readOnly, err := repo.IsMirrorWithMetadata(ctx); err != nil {
+		return nil, err
+	} else if readOnly {
+		return nil, repo_model.ErrReadOnlyMirror
+	}
+
 	if user_model.IsUserBlockedBy(ctx, doer, issue.PosterID, repo.OwnerID) {
 		if isAdmin, _ := access_model.IsUserRepoAdmin(ctx, repo, doer); !isAdmin {
 			return nil, user_model.ErrBlockedUser

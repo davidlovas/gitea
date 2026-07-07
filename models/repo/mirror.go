@@ -19,6 +19,11 @@ import (
 // ErrMirrorNotExist mirror does not exist error
 var ErrMirrorNotExist = util.NewNotExistErrorf("Mirror does not exist")
 
+// ErrReadOnlyMirror is returned when a mutating operation is attempted on a
+// mirror that syncs the affected content from its remote (issues, pull
+// requests). The remote is the sole writer, so local changes are rejected.
+var ErrReadOnlyMirror = util.NewPermissionDeniedErrorf("the repository is a read-only mirror")
+
 // Mirror represents mirror information of a repository.
 type Mirror struct {
 	ID          int64       `xorm:"pk autoincr"`
@@ -49,6 +54,14 @@ type Mirror struct {
 
 func init() {
 	db.RegisterModel(new(Mirror))
+}
+
+// SyncsMetadata reports whether this mirror keeps any metadata entity (issues,
+// pull requests, comments, releases, ...) current from its remote, on top of
+// git content.
+func (m *Mirror) SyncsMetadata() bool {
+	return m.SyncIssues || m.SyncPullRequests || m.SyncComments ||
+		m.SyncMilestones || m.SyncLabels || m.SyncReleases || m.SyncWiki
 }
 
 // BeforeInsert will be invoked by XORM before inserting a record

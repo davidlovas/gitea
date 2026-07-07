@@ -33,6 +33,12 @@ type Permission struct {
 
 	everyoneAccessMode  map[unit.Type]perm_model.AccessMode // the unit's minimal access mode for every signed-in user
 	anonymousAccessMode map[unit.Type]perm_model.AccessMode // the unit's minimal access mode for anonymous (non-signed-in) user
+
+	// readOnlyUnits caps these units at read access for everyone, including
+	// owners and admins. It makes a synced mirror's issues and pull requests
+	// read-only: the remote is the sole writer, so local mutations would break
+	// the sync.
+	readOnlyUnits map[unit.Type]bool
 }
 
 // IsOwner returns true if current user is the owner of repository.
@@ -92,6 +98,16 @@ func (p *Permission) GetFirstUnitRepoID() int64 {
 // UnitAccessMode returns current user access mode to the specify unit of the repository
 // It also considers "public (anonymous/everyone) access mode"
 func (p *Permission) UnitAccessMode(unitType unit.Type) perm_model.AccessMode {
+	mode := p.unitAccessModeUncapped(unitType)
+	// a read-only unit (e.g. a synced mirror's issues/pulls) is capped last, so
+	// the cap applies even to owners and admins
+	if p.readOnlyUnits[unitType] {
+		mode = min(mode, perm_model.AccessModeRead)
+	}
+	return mode
+}
+
+func (p *Permission) unitAccessModeUncapped(unitType unit.Type) perm_model.AccessMode {
 	// if the units map contains the access mode, use it, but admin/owner mode could override it
 	if m, ok := p.unitsMode[unitType]; ok {
 		return util.Iif(p.AccessMode >= perm_model.AccessModeAdmin, p.AccessMode, m)
@@ -209,6 +225,24 @@ func applyPublicAccessPermission(unitType unit.Type, accessMode perm_model.Acces
 		}
 		(*modeMap)[unitType] = accessMode
 	}
+}
+
+// readOnlyMirrorUnits returns the units that must be read-only because the
+// repository is a mirror that syncs their content from a remote. It is nil for
+// ordinary repositories and plain (git-only) mirrors, so their behavior is
+// unchanged.
+func readOnlyMirrorUnits(ctx context.Context, repo *repo_model.Repository) (map[unit.Type]bool, error) {
+	isMetaMirror, err := repo.IsMirrorWithMetadata(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !isMetaMirror {
+		return nil, nil
+	}
+	return map[unit.Type]bool{
+		unit.TypeIssues:       true,
+		unit.TypePullRequests: true,
+	}, nil
 }
 
 func finalProcessRepoUnitPermission(user *user_model.User, perm *Permission) {
@@ -405,6 +439,13 @@ func GetIndividualUserRepoPermission(ctx context.Context, repo *repo_model.Repos
 		return perm, err
 	}
 	perm.units = repo.Units
+
+	// a synced mirror's issues and pull requests are read-only for everyone;
+	// set here (before the branching returns) so it survives every path,
+	// including the owner/admin early return below
+	if perm.readOnlyUnits, err = readOnlyMirrorUnits(ctx, repo); err != nil {
+		return perm, err
+	}
 
 	// anonymous user visit private repo.
 	if user == nil && repo.IsPrivate {

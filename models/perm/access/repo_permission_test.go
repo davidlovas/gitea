@@ -158,6 +158,31 @@ func TestUnitAccessMode(t *testing.T) {
 	assert.Equal(t, perm_model.AccessModeRead, perm.UnitAccessMode(unit.TypeWiki), "has unit, and map, use map")
 }
 
+func TestUnitAccessModeReadOnlyCap(t *testing.T) {
+	// a read-only unit is capped at read even for an owner (a synced mirror's
+	// issues/pulls); other units are unaffected
+	perm := Permission{
+		AccessMode: perm_model.AccessModeOwner,
+		units: []*repo_model.RepoUnit{
+			{Type: unit.TypeIssues},
+			{Type: unit.TypePullRequests},
+			{Type: unit.TypeCode},
+		},
+		readOnlyUnits: map[unit.Type]bool{
+			unit.TypeIssues:       true,
+			unit.TypePullRequests: true,
+		},
+	}
+	assert.Equal(t, perm_model.AccessModeRead, perm.UnitAccessMode(unit.TypeIssues), "owner is capped to read on a read-only issues unit")
+	assert.Equal(t, perm_model.AccessModeRead, perm.UnitAccessMode(unit.TypePullRequests), "owner is capped to read on a read-only pulls unit")
+	assert.False(t, perm.CanWrite(unit.TypeIssues))
+	assert.False(t, perm.CanWrite(unit.TypePullRequests))
+	assert.True(t, perm.CanRead(unit.TypeIssues))
+	// a unit not in the read-only set keeps the owner's full access
+	assert.Equal(t, perm_model.AccessModeOwner, perm.UnitAccessMode(unit.TypeCode), "non-read-only unit keeps owner access")
+	assert.True(t, perm.CanWrite(unit.TypeCode))
+}
+
 func TestGetRepoPermission(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
 	t.Run("GetIndividualUserRepoPermission", testGetIndividualUserRepoPermission)
