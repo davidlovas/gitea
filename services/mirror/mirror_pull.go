@@ -269,12 +269,6 @@ func getRepoPullMirrorLockKey(repoID int64) string {
 	return fmt.Sprintf("repo_pull_mirror_%d", repoID)
 }
 
-// syncsMetadata reports whether any metadata entity is enabled for this mirror.
-func syncsMetadata(m *repo_model.Mirror) bool {
-	return m.SyncIssues || m.SyncPullRequests || m.SyncComments ||
-		m.SyncMilestones || m.SyncLabels || m.SyncReleases || m.SyncWiki
-}
-
 // runSyncMetadata keeps the mirror's enabled metadata entities (issues, pull
 // requests, comments, reviews, ...) current from its remote source, on top of
 // the git content synced by runSync. It returns true on success.
@@ -294,23 +288,22 @@ func runSyncMetadata(ctx context.Context, m *repo_model.Mirror) bool {
 	password, _ := remoteURL.User.Password()
 
 	opts := migration.MigrateOptions{
-		CloneAddr:       repo.OriginalURL,
-		AuthUsername:    remoteURL.User.Username(),
-		AuthPassword:    password,
-		UID:             int(repo.OwnerID),
-		RepoName:        repo.Name,
-		Mirror:          true,
-		LFS:             m.LFS,
-		LFSEndpoint:     m.LFSEndpoint,
-		GitServiceType:  repo.OriginalServiceType,
-		OriginalURL:     repo.OriginalURL,
-		Wiki:            m.SyncWiki && repo_service.HasWiki(ctx, repo),
-		Issues:          m.SyncIssues,
-		Milestones:      m.SyncMilestones,
-		Labels:          m.SyncLabels,
-		Releases:        m.SyncReleases,
-		Comments:        m.SyncComments,
-		PullRequests:    m.SyncPullRequests,
+		CloneAddr:      repo.OriginalURL,
+		AuthUsername:   remoteURL.User.Username(),
+		AuthPassword:   password,
+		UID:            int(repo.OwnerID),
+		RepoName:       repo.Name,
+		Mirror:         true,
+		LFS:            m.LFS,
+		LFSEndpoint:    m.LFSEndpoint,
+		GitServiceType: repo.OriginalServiceType,
+		OriginalURL:    repo.OriginalURL,
+		Issues:         m.SyncIssues,
+		PullRequests:   m.SyncPullRequests,
+		// comments, reviews, labels and milestones come along with the issues
+		// and pull requests as part of the read-only reflection; releases are
+		// already handled by the native git tag mirror
+		Comments:        m.SyncIssues || m.SyncPullRequests,
 		MigrateToRepoID: repo.ID,
 		MirrorInterval:  m.Interval.String(),
 	}
@@ -392,7 +385,7 @@ func SyncPullMirror(ctx context.Context, repoID int64) bool {
 		return false
 	}
 
-	if syncsMetadata(m) {
+	if m.SyncsMetadata() {
 		log.Trace("SyncMirrors [repo: %-v]: Running metadata sync", m.Repo)
 		if ok := runSyncMetadata(ctx, m); !ok {
 			if err = repo_model.TouchMirror(ctx, m); err != nil {

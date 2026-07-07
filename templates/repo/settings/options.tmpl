@@ -146,30 +146,6 @@
 												<input name="mirror_sync_pull_requests" type="checkbox" {{if .PullMirror.SyncPullRequests}}checked{{end}}>
 												<label>{{ctx.Locale.Tr "repo.settings.mirror_sync_pull_requests"}}</label>
 											</div>
-										</div>
-										<div class="inline field">
-											<div class="ui checkbox">
-												<input name="mirror_sync_comments" type="checkbox" {{if .PullMirror.SyncComments}}checked{{end}}>
-												<label>{{ctx.Locale.Tr "repo.settings.mirror_sync_comments"}}</label>
-											</div>
-										</div>
-										<div class="inline field">
-											<div class="ui checkbox">
-												<input name="mirror_sync_labels" type="checkbox" {{if .PullMirror.SyncLabels}}checked{{end}}>
-												<label>{{ctx.Locale.Tr "repo.settings.mirror_sync_labels"}}</label>
-											</div>
-										</div>
-										<div class="inline field">
-											<div class="ui checkbox">
-												<input name="mirror_sync_milestones" type="checkbox" {{if .PullMirror.SyncMilestones}}checked{{end}}>
-												<label>{{ctx.Locale.Tr "repo.settings.mirror_sync_milestones"}}</label>
-											</div>
-										</div>
-										<div class="inline field">
-											<div class="ui checkbox">
-												<input name="mirror_sync_releases" type="checkbox" {{if .PullMirror.SyncReleases}}checked{{end}}>
-												<label>{{ctx.Locale.Tr "repo.settings.mirror_sync_releases"}}</label>
-											</div>
 											<p class="help">{{ctx.Locale.Tr "repo.settings.mirror_sync_metadata_desc"}}</p>
 										</div>
 										<div class="inline field {{if .Err_Interval}}error{{end}}">

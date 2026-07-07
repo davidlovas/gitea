@@ -9,18 +9,13 @@ import (
 	"xorm.io/xorm"
 )
 
-// AddMetadataSyncOptionsToMirror adds the per-entity sync toggles to the mirror
-// table so a pull mirror can additionally keep issues, pull requests, comments,
-// reviews, labels, milestones, releases and the wiki current from its remote
-// source. All default off, preserving the existing git-only mirror behavior.
+// AddMetadataSyncOptionsToMirror adds the issue and pull-request sync toggles to
+// the mirror table so a pull mirror can additionally keep issue/pull-request
+// metadata current from its remote source. Both default off, preserving the
+// existing git-only mirror behavior.
 func AddMetadataSyncOptionsToMirror(x db.EngineMigration) error {
 	type Mirror struct {
-		SyncWiki         bool `xorm:"NOT NULL DEFAULT false"`
 		SyncIssues       bool `xorm:"NOT NULL DEFAULT false"`
-		SyncMilestones   bool `xorm:"NOT NULL DEFAULT false"`
-		SyncLabels       bool `xorm:"NOT NULL DEFAULT false"`
-		SyncReleases     bool `xorm:"NOT NULL DEFAULT false"`
-		SyncComments     bool `xorm:"NOT NULL DEFAULT false"`
 		SyncPullRequests bool `xorm:"NOT NULL DEFAULT false"`
 	}
 

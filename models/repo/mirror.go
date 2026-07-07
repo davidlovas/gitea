@@ -32,14 +32,11 @@ type Mirror struct {
 	Interval    time.Duration
 	EnablePrune bool `xorm:"NOT NULL DEFAULT true"`
 
-	// which metadata entities to keep in sync from the remote source, in
-	// addition to git content; all default off to preserve existing behavior
-	SyncWiki         bool `xorm:"NOT NULL DEFAULT false"`
+	// whether to keep issue and pull-request metadata current from the remote
+	// source, in addition to git content; both default off to preserve existing
+	// behavior. Their comments, reviews, labels and milestones come along as
+	// part of the read-only reflection.
 	SyncIssues       bool `xorm:"NOT NULL DEFAULT false"`
-	SyncMilestones   bool `xorm:"NOT NULL DEFAULT false"`
-	SyncLabels       bool `xorm:"NOT NULL DEFAULT false"`
-	SyncReleases     bool `xorm:"NOT NULL DEFAULT false"`
-	SyncComments     bool `xorm:"NOT NULL DEFAULT false"`
 	SyncPullRequests bool `xorm:"NOT NULL DEFAULT false"`
 
 	UpdatedUnix    timeutil.TimeStamp `xorm:"INDEX"`
@@ -56,12 +53,10 @@ func init() {
 	db.RegisterModel(new(Mirror))
 }
 
-// SyncsMetadata reports whether this mirror keeps any metadata entity (issues,
-// pull requests, comments, releases, ...) current from its remote, on top of
-// git content.
+// SyncsMetadata reports whether this mirror keeps issue/pull-request metadata
+// current from its remote, on top of git content.
 func (m *Mirror) SyncsMetadata() bool {
-	return m.SyncIssues || m.SyncPullRequests || m.SyncComments ||
-		m.SyncMilestones || m.SyncLabels || m.SyncReleases || m.SyncWiki
+	return m.SyncIssues || m.SyncPullRequests
 }
 
 // BeforeInsert will be invoked by XORM before inserting a record

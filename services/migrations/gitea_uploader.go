@@ -417,18 +417,66 @@ func (g *GiteaLocalUploader) PatchIssues(ctx context.Context, issues ...*base.Is
 	return nil
 }
 
+// ensureLabels returns the repository labels matching the given ones, creating
+// any that do not exist yet and caching them. This lets a sync carry an issue's
+// labels along even when the label was never separately imported (e.g. on a
+// mirror whose initial import was git-only).
+func (g *GiteaLocalUploader) ensureLabels(ctx context.Context, labels []*base.Label) ([]*issues_model.Label, error) {
+	result := make([]*issues_model.Label, 0, len(labels))
+	for _, l := range labels {
+		lb, ok := g.labels[l.Name]
+		if !ok {
+			color, err := label.NormalizeColor(l.Color)
+			if err != nil {
+				log.Warn("Invalid label color: #%s for label: %s in %s/%s", l.Color, l.Name, g.repoOwner, g.repoName)
+				color = "#ffffff"
+			}
+			lb = &issues_model.Label{
+				RepoID:      g.repo.ID,
+				Name:        l.Name,
+				Exclusive:   l.Exclusive,
+				Description: l.Description,
+				Color:       color,
+			}
+			if err := issues_model.NewLabels(ctx, lb); err != nil {
+				return nil, err
+			}
+			g.labels[l.Name] = lb
+		}
+		result = append(result, lb)
+	}
+	return result, nil
+}
+
+// ensureMilestone returns the id of the repository milestone with the given
+// title, creating it if needed, so a synced issue's milestone is carried along.
+func (g *GiteaLocalUploader) ensureMilestone(ctx context.Context, title string) (int64, error) {
+	if title == "" {
+		return 0, nil
+	}
+	if id, ok := g.milestones[title]; ok {
+		return id, nil
+	}
+	ms := &issues_model.Milestone{RepoID: g.repo.ID, Name: title}
+	if err := issues_model.NewMilestone(ctx, ms); err != nil {
+		return 0, err
+	}
+	g.milestones[title] = ms.ID
+	return ms.ID, nil
+}
+
 func (g *GiteaLocalUploader) prepareIssues(ctx context.Context, issues ...*base.Issue) ([]*issues_model.Issue, error) {
 	iss := make([]*issues_model.Issue, 0, len(issues))
 	for _, issue := range issues {
-		var labels []*issues_model.Label
-		for _, label := range issue.Labels {
-			lb, ok := g.labels[label.Name]
-			if ok {
-				labels = append(labels, lb)
-			}
+		labels, err := g.ensureLabels(ctx, issue.Labels)
+		if err != nil {
+			return nil, err
 		}
 
-		milestoneID := g.milestones[issue.Milestone]
+		milestoneID, err := g.ensureMilestone(ctx, issue.Milestone)
+		if err != nil {
+			return nil, err
+		}
 
 		if issue.Created.IsZero() {
 			if issue.Closed != nil {

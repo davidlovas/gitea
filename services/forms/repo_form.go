@@ -109,13 +109,11 @@ type RepoSettingForm struct {
 	Template               bool
 	EnablePrune            bool
 
-	// Pull-mirror metadata sync toggles
+	// Pull-mirror metadata sync toggles. Issues and pull requests are the only
+	// choices; their comments, reviews, labels and milestones come along as
+	// part of the read-only reflection.
 	MirrorSyncIssues       bool `form:"mirror_sync_issues"`
 	MirrorSyncPullRequests bool `form:"mirror_sync_pull_requests"`
-	MirrorSyncComments     bool `form:"mirror_sync_comments"`
-	MirrorSyncLabels       bool `form:"mirror_sync_labels"`
-	MirrorSyncMilestones   bool `form:"mirror_sync_milestones"`
-	MirrorSyncReleases     bool `form:"mirror_sync_releases"`
 
 	// Advanced settings
 	EnableCode bool
