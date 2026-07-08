@@ -308,13 +308,16 @@ func runSyncMetadata(ctx context.Context, m *repo_model.Mirror) bool {
 		MirrorInterval:  m.Interval.String(),
 	}
 
-	if _, err := migrations.SyncRepository(ctx, repo.MustOwner(ctx), repo, opts, nil); err != nil {
-		log.Error("SyncMirrors [repo: %-v]: failed to sync metadata: %v", m.Repo, err)
+	// Enable the issue/PR units up front so mirrored metadata becomes visible
+	// incrementally as it syncs, rather than only appearing after the full pass
+	// completes (which can be very long for large repositories).
+	if err := enableMetadataUnits(ctx, m); err != nil {
+		log.Error("SyncMirrors [repo: %-v]: failed to enable metadata units: %v", m.Repo, err)
 		return false
 	}
 
-	if err := enableMetadataUnits(ctx, m); err != nil {
-		log.Error("SyncMirrors [repo: %-v]: failed to enable metadata units: %v", m.Repo, err)
+	if _, err := migrations.SyncRepository(ctx, repo.MustOwner(ctx), repo, opts, nil); err != nil {
+		log.Error("SyncMirrors [repo: %-v]: failed to sync metadata: %v", m.Repo, err)
 		return false
 	}
 	return true
