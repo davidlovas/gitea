@@ -379,6 +379,9 @@ func NewIssuePost(ctx *context.Context) {
 			ctx.HTTPError(http.StatusBadRequest, "UserDoesNotHaveAccessToRepo", err.Error())
 		} else if errors.Is(err, user_model.ErrBlockedUser) {
 			ctx.JSONError(ctx.Tr("repo.issues.new.blocked_user"))
+		} else if errors.Is(err, repo_model.ErrReadOnlyMirror) {
+			ctx.Flash.Error(ctx.Tr("repo.mirror_read_only"))
+			ctx.JSONRedirect(ctx.Repo.RepoLink + "/issues")
 		} else {
 			ctx.ServerError("NewIssue", err)
 		}

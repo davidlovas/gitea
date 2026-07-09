@@ -1016,6 +1016,7 @@
   "repo.default_branch": "Default Branch",
   "repo.default_branch_label": "default",
   "repo.default_branch_helper": "The default branch is the base branch for pull requests and code commits.",
+  "repo.mirror_read_only": "This repository is a read-only mirror.",
   "repo.mirror_prune": "Prune",
   "repo.mirror_prune_desc": "Remove obsolete remote-tracking references",
   "repo.mirror_interval": "Mirror Interval (valid time units are 'h', 'm', 's'). 0 to disable periodic sync. (Minimum interval: %s)",

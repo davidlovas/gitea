@@ -13,6 +13,7 @@ import (
 	git_model "gitea.dev/models/git"
 	issues_model "gitea.dev/models/issues"
 	"gitea.dev/models/renderhelper"
+	repo_model "gitea.dev/models/repo"
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/git"
 	"gitea.dev/modules/gitrepo"
@@ -66,6 +67,9 @@ func NewComment(ctx *context.Context) {
 		if err != nil {
 			if errors.Is(err, user_model.ErrBlockedUser) {
 				ctx.JSONError(ctx.Tr("repo.issues.comment.blocked_user"))
+			} else if errors.Is(err, repo_model.ErrReadOnlyMirror) {
+				ctx.Flash.Error(ctx.Tr("repo.mirror_read_only"))
+				ctx.JSONRedirect(issue.Link())
 			} else {
 				ctx.ServerError("CreateIssueComment", err)
 			}

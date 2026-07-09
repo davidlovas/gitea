@@ -53,14 +53,16 @@
 						</div>
 						<div class="comment-header-right">
 							{{template "repo/issue/view_content/show_role" dict "ShowRole" .ShowRole}}
-							{{if not $.Repository.IsArchived}}
+							{{if and (not $.Repository.IsArchived) (not $.IsReadOnlyMirror)}}
 								{{template "repo/issue/view_content/add_reaction" dict "ActionURL" (printf "%s/comments/%d/reactions" $.RepoLink .ID)}}
 							{{end}}
-							{{template "repo/issue/view_content/context_menu" dict "item" . "delete" true "issue" true "diff" false "IsCommentPoster" (and $.IsSigned (eq $.SignedUserID .PosterID))}}
+							{{if not $.IsReadOnlyMirror}}
+								{{template "repo/issue/view_content/context_menu" dict "item" . "delete" true "issue" true "diff" false "IsCommentPoster" (and $.IsSigned (eq $.SignedUserID .PosterID))}}
+							{{end}}
 						</div>
 					</div>
 					<div class="ui attached segment comment-body" role="article">
-						<div class="render-content markup" {{if or $.Permission.IsAdmin $.HasIssuesOrPullsWritePermission (and $.IsSigned (eq $.SignedUserID .PosterID))}}data-can-edit="true"{{end}}>
+						<div class="render-content markup" {{if and (not $.IsReadOnlyMirror) (or $.Permission.IsAdmin $.HasIssuesOrPullsWritePermission (and $.IsSigned (eq $.SignedUserID .PosterID)))}}data-can-edit="true"{{end}}>
 							{{if .RenderedContent}}
 								{{.RenderedContent}}
 							{{else}}
@@ -420,14 +422,14 @@
 							</div>
 							<div class="comment-header-right">
 								{{template "repo/issue/view_content/show_role" dict "ShowRole" .ShowRole}}
-								{{if not $.Repository.IsArchived}}
+								{{if and (not $.Repository.IsArchived) (not $.IsReadOnlyMirror)}}
 									{{template "repo/issue/view_content/add_reaction" dict "ActionURL" (printf "%s/comments/%d/reactions" $.RepoLink .ID)}}
 									{{template "repo/issue/view_content/context_menu" dict "item" . "delete" false "issue" true "diff" false "IsCommentPoster" (and $.IsSigned (eq $.SignedUserID .PosterID))}}
 								{{end}}
 							</div>
 						</div>
 						<div class="ui attached segment comment-body">
-							<div class="render-content markup" {{if or $.Permission.IsAdmin $.HasIssuesOrPullsWritePermission (and $.IsSigned (eq $.SignedUserID .PosterID))}}data-can-edit="true"{{end}}>
+							<div class="render-content markup" {{if and (not $.IsReadOnlyMirror) (or $.Permission.IsAdmin $.HasIssuesOrPullsWritePermission (and $.IsSigned (eq $.SignedUserID .PosterID)))}}data-can-edit="true"{{end}}>
 								{{if .RenderedContent}}
 									{{.RenderedContent}}
 								{{else}}

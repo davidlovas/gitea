@@ -1112,6 +1112,9 @@ func MergePullRequest(ctx *context.Context) {
 				ctx.JSONError(ctx.Tr("repo.pulls.invalid_merge_option"))
 			case strings.Contains(err.Error(), "Wrong commit ID"):
 				ctx.JSONError(ctx.Tr("repo.pulls.wrong_commit_id"))
+			case errors.Is(err, repo_model.ErrReadOnlyMirror):
+				ctx.Flash.Error(ctx.Tr("repo.mirror_read_only"))
+				ctx.JSONRedirect(issue.Link())
 			default:
 				ctx.ServerError("MergedManually", err)
 			}
@@ -1161,6 +1164,9 @@ func MergePullRequest(ctx *context.Context) {
 	if err := pull_service.Merge(ctx, pr, ctx.Doer, repo_model.MergeStyle(form.Do), form.HeadCommitID, message, false); err != nil {
 		if pull_service.IsErrInvalidMergeStyle(err) {
 			ctx.JSONError(ctx.Tr("repo.pulls.invalid_merge_option"))
+		} else if errors.Is(err, repo_model.ErrReadOnlyMirror) {
+			ctx.Flash.Error(ctx.Tr("repo.mirror_read_only"))
+			ctx.JSONRedirect(issue.Link())
 		} else if pull_service.IsErrMergeConflicts(err) {
 			conflictError := err.(pull_service.ErrMergeConflicts)
 			flashError, err := ctx.RenderToHTML(tplAlertDetails, map[string]any{
@@ -1420,6 +1426,9 @@ func CompareAndPullRequestPost(ctx *context.Context) {
 		switch {
 		case repo_model.IsErrUserDoesNotHaveAccessToRepo(err):
 			ctx.HTTPError(http.StatusBadRequest, "UserDoesNotHaveAccessToRepo", err.Error())
+		case errors.Is(err, repo_model.ErrReadOnlyMirror):
+			ctx.Flash.Error(ctx.Tr("repo.mirror_read_only"))
+			ctx.JSONRedirect(ctx.Repo.RepoLink + "/pulls")
 		case git.IsErrPushRejected(err):
 			pushrejErr := err.(*git.ErrPushRejected)
 			message := pushrejErr.Message

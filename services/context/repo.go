@@ -623,6 +623,10 @@ func repoAssignmentPrepareTemplateData(ctx *Context, data *repoAssignmentPrepare
 	ctx.Data["CanWriteIssues"] = ctx.Repo.Permission.CanWrite(unit_model.TypeIssues)
 	ctx.Data["CanWritePulls"] = ctx.Repo.Permission.CanWrite(unit_model.TypePullRequests)
 	ctx.Data["CanWriteActions"] = ctx.Repo.Permission.CanWrite(unit_model.TypeActions)
+	// A synced metadata mirror displays issues/PRs read-only; templates use this
+	// to hide write controls (comment box, New Issue, edit/close, merge, review).
+	isReadOnlyMirror, _ := ctx.Repo.Repository.IsMirrorWithMetadata(ctx)
+	ctx.Data["IsReadOnlyMirror"] = isReadOnlyMirror
 
 	canSignedUserFork, err := repo_module.CanUserForkRepo(ctx, ctx.Doer, ctx.Repo.Repository)
 	if err != nil {
