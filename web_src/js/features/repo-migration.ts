@@ -10,15 +10,17 @@ const lfs = document.querySelector<HTMLInputElement>('#lfs');
 const lfsSettings = document.querySelector<HTMLElement>('#lfs_settings')!;
 const lfsEndpoint = document.querySelector<HTMLElement>('#lfs_endpoint')!;
 const items = document.querySelectorAll<HTMLInputElement>('#migrate_items input[type=checkbox]');
+const syncItems = document.querySelector<HTMLElement>('#migrate_sync_items');
 
 export function initRepoMigration() {
   checkAuth();
   setLFSSettingsVisibility();
+  setSyncItemsVisibility();
 
   user?.addEventListener('input', () => {checkItems(false)});
   pass?.addEventListener('input', () => {checkItems(false)});
   token?.addEventListener('input', () => {checkItems(true)});
-  mirror?.addEventListener('change', () => {checkItems(true)});
+  mirror?.addEventListener('change', () => {checkItems(true); setSyncItemsVisibility()});
   document.querySelector('#lfs_settings_show')?.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -77,4 +79,9 @@ function setLFSSettingsVisibility() {
   const visible = lfs.checked;
   toggleElem(lfsSettings, visible);
   hideElem(lfsEndpoint);
+}
+
+function setSyncItemsVisibility() {
+  if (!syncItems) return;
+  toggleElem(syncItems, Boolean(mirror?.checked));
 }

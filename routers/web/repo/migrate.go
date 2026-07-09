@@ -61,6 +61,8 @@ func Migrate(ctx *context.Context) {
 	ctx.Data["issues"] = ctx.FormString("issues") == "1"
 	ctx.Data["pull_requests"] = ctx.FormString("pull_requests") == "1"
 	ctx.Data["releases"] = ctx.FormString("releases") == "1"
+	ctx.Data["sync_issues"] = ctx.FormString("sync_issues") == "1"
+	ctx.Data["sync_pull_requests"] = ctx.FormString("sync_pull_requests") == "1"
 
 	ctxUser := checkContextUser(ctx, ctx.FormInt64("org"))
 	if ctx.Written() {
@@ -232,6 +234,8 @@ func MigratePost(ctx *context.Context) {
 		opts.Comments = false
 		opts.PullRequests = false
 		opts.Releases = false
+		opts.SyncIssues = form.SyncIssues
+		opts.SyncPullRequests = form.SyncPullRequests
 	}
 	if form.Service == structs.CodeCommitService {
 		opts.AWSAccessKeyID = form.AWSAccessKeyID

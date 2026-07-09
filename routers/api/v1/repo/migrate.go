@@ -163,6 +163,8 @@ func Migrate(ctx *context.APIContext) {
 		opts.Comments = false
 		opts.PullRequests = false
 		opts.Releases = false
+		opts.SyncIssues = form.SyncIssues
+		opts.SyncPullRequests = form.SyncPullRequests
 	}
 	if gitServiceType == api.CodeCommitService {
 		opts.AWSAccessKeyID = form.AWSAccessKeyID
