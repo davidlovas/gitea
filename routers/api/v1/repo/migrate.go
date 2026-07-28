@@ -156,6 +156,7 @@ func Migrate(ctx *context.APIContext) {
 		Releases:       form.Releases,
 		GitServiceType: gitServiceType,
 		MirrorInterval: form.MirrorInterval,
+		UseGraphQL:     form.UseGraphQL,
 	}
 	if opts.Mirror {
 		opts.Issues = false
