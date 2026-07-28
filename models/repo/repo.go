@@ -602,6 +602,20 @@ func (repo *Repository) AllowsPulls(ctx context.Context) bool {
 	return repo.CanEnablePulls() && repo.UnitEnabled(ctx, unit.TypePullRequests)
 }
 
+func (repo *Repository) IsMirrorWithMetadata(ctx context.Context) (bool, error) {
+	if !repo.IsMirror {
+		return false, nil
+	}
+	mirror, err := GetMirrorByRepoID(ctx, repo.ID)
+	if err != nil {
+		if errors.Is(err, ErrMirrorNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return mirror.SyncIssues || mirror.SyncPullRequests, nil
+}
+
 // CanEnableEditor returns true if repository meets the requirements of web editor.
 // FIXME: most CanEnableEditor calls should be replaced with CanContentChange
 // And all other like CanCreateBranch / CanEnablePulls should also be updated

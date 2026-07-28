@@ -52,7 +52,6 @@ type MigrateOptions struct {
 	// read-only mirror.
 	SkipReactions bool
 
-
 	AWSAccessKeyID     string
 	AWSSecretAccessKey string `json:",omitempty"`
 

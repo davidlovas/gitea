@@ -783,6 +783,89 @@ func insertIssue(ctx context.Context, issue *Issue) error {
 	return nil
 }
 
+// GetMaxIssueUpdatedUnix returns the latest updated_unix among a repository's
+// issues (isPull false) or pull requests (isPull true), zero when there are
+// none. Pull requests are stored in the issue table, so the two streams are
+// watermarked independently: a resumable mirror sync walks each source stream in
+// updated-ascending order, and the per-stream max updated_unix is the point it
+// resumes from, so a stream that only partly completed is not skipped by the
+// other stream's higher watermark.
+func GetMaxIssueUpdatedUnix(ctx context.Context, repoID int64, isPull bool) (int64, error) {
+	var maxUpdated int64
+	if _, err := db.GetEngine(ctx).Table("issue").
+		Where("repo_id = ?", repoID).And("is_pull = ?", isPull).
+		Select("COALESCE(MAX(updated_unix), 0)").Get(&maxUpdated); err != nil {
+		return 0, err
+	}
+	return maxUpdated, nil
+}
+
+// UpsertIssues inserts new issues and updates existing issues in the database.
+// Existing issues are matched on (repo_id, index) — the remote issue number is
+// preserved as the issue index by migrations, so it acts as the external key.
+func UpsertIssues(ctx context.Context, issues ...*Issue) error {
+	return db.WithTx(ctx, func(ctx context.Context) error {
+		for _, issue := range issues {
+			if _, err := upsertIssue(ctx, issue); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func upsertIssue(ctx context.Context, issue *Issue) (isInsert bool, err error) {
+	has, err := db.GetEngine(ctx).Table("issue").Where("repo_id = ? AND `index` = ?", issue.RepoID, issue.Index).Cols("id").Get(&issue.ID)
+	if err != nil {
+		return false, err
+	}
+	if !has {
+		return true, insertIssue(ctx, issue)
+	}
+	return false, updateMigratedIssue(ctx, issue)
+}
+
+// updateMigratedIssue updates an issue previously created by a migration with
+// the current remote state. The remote is the sole writer of a synced
+// repository, so labels and issue-level reactions are simply replaced.
+func updateMigratedIssue(ctx context.Context, issue *Issue) error {
+	sess := db.GetEngine(ctx)
+	if _, err := sess.NoAutoTime().ID(issue.ID).AllCols().Update(issue); err != nil {
+		return err
+	}
+
+	if _, err := sess.Where("issue_id = ?", issue.ID).Delete(&IssueLabel{}); err != nil {
+		return err
+	}
+	issueLabels := make([]IssueLabel, 0, len(issue.Labels))
+	for _, label := range issue.Labels {
+		issueLabels = append(issueLabels, IssueLabel{
+			IssueID: issue.ID,
+			LabelID: label.ID,
+		})
+	}
+	if len(issueLabels) > 0 {
+		if _, err := sess.Insert(issueLabels); err != nil {
+			return err
+		}
+	}
+
+	// comment_id = 0 keeps reactions on the issue's comments untouched
+	if _, err := sess.Where("issue_id = ? AND comment_id = 0", issue.ID).Delete(&Reaction{}); err != nil {
+		return err
+	}
+	for _, reaction := range issue.Reactions {
+		reaction.IssueID = issue.ID
+	}
+	if len(issue.Reactions) > 0 {
+		if _, err := sess.Insert(issue.Reactions); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // ChangeIssueTimeEstimate changes the plan time of this issue, as the given user.
 func ChangeIssueTimeEstimate(ctx context.Context, issue *Issue, doer *user_model.User, timeEstimate int64) error {
 	return db.WithTx(ctx, func(ctx context.Context) error {
