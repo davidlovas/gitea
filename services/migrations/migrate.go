@@ -12,7 +12,9 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
+	issues_model "gitea.dev/models/issues"
 	repo_model "gitea.dev/models/repo"
 	system_model "gitea.dev/models/system"
 	user_model "gitea.dev/models/user"
@@ -502,6 +504,214 @@ func migrateRepository(ctx context.Context, doer *user_model.User, downloader ba
 
 			if isEnd {
 				break
+			}
+		}
+	}
+
+	return uploader.Finish(ctx)
+}
+
+// SyncRepository syncs new and updated issues and pull requests of a
+// previously migrated repository from its remote
+func SyncRepository(ctx context.Context, doer *user_model.User, repo *repo_model.Repository, opts base.MigrateOptions, messenger base.Messenger) (*repo_model.Repository, error) {
+	downloader, err := newDownloader(ctx, repo.OwnerName, opts)
+	if err != nil {
+		return nil, err
+	}
+	if !downloader.SupportSyncing() {
+		log.Info("syncing is not supported for repositories of type %v, ignored", opts.GitServiceType)
+		return nil, nil
+	}
+
+	uploader := NewGiteaLocalUploader(ctx, doer, repo.OwnerName, opts.RepoName)
+	uploader.gitServiceType = opts.GitServiceType
+	uploader.repo = repo
+	uploader.sameApp = strings.HasPrefix(repo.OriginalURL, setting.AppURL)
+	uploader.gitRepo, err = git.OpenRepository(repo)
+	if err != nil {
+		return nil, err
+	}
+	defer uploader.Close()
+
+	if err := uploader.loadExistingLabelsAndMilestones(ctx); err != nil {
+		return nil, err
+	}
+
+	// Per-stream resume watermarks. Each source stream (issues, pull requests,
+	// comments) is walked in updated-ascending order and resumes from the max
+	// updated_unix already imported for that stream, so a stream that only
+	// partially completed before an interruption is not skipped by another
+	// stream's higher watermark. A zero time.Time means "fetch everything" and is
+	// omitted from the remote query (NOT time.Unix(0,0), which GitHub's issues
+	// API rejects as since=1970-01-01).
+	marks, err := newSyncWatermarks(ctx, repo.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := syncRepository(ctx, downloader, uploader, opts, messenger, marks); err != nil {
+		// unlike a failed migration there is nothing to roll back: rolling
+		// back would delete the existing repository
+		if err2 := system_model.CreateRepositoryNotice(fmt.Sprintf("Sync repository (%s/%s) from %s failed: %v", repo.OwnerName, opts.RepoName, opts.OriginalURL, err)); err2 != nil {
+			log.Error("create repository notice failed: ", err2)
+		}
+		return nil, err
+	}
+	return uploader.repo, nil
+}
+
+// syncWatermarks holds the per-stream resume points for an incremental sync.
+// Each stream advances independently so an interrupted sweep resumes exactly
+// where it stopped rather than being skipped by another stream's progress.
+type syncWatermarks struct {
+	issues   time.Time
+	pulls    time.Time
+	comments time.Time
+}
+
+// newSyncWatermarks derives the per-stream resume points from what is already
+// stored, so resume needs no extra persisted state: the data itself is the
+// checkpoint.
+func newSyncWatermarks(ctx context.Context, repoID int64) (syncWatermarks, error) {
+	issueMax, err := issues_model.GetMaxIssueUpdatedUnix(ctx, repoID, false)
+	if err != nil {
+		return syncWatermarks{}, err
+	}
+	prMax, err := issues_model.GetMaxIssueUpdatedUnix(ctx, repoID, true)
+	if err != nil {
+		return syncWatermarks{}, err
+	}
+	commentMax, err := issues_model.GetMaxCommentUpdatedUnix(ctx, repoID)
+	if err != nil {
+		return syncWatermarks{}, err
+	}
+	return syncWatermarks{
+		issues:   watermarkTime(issueMax),
+		pulls:    watermarkTime(prMax),
+		comments: watermarkTime(commentMax),
+	}, nil
+}
+
+func watermarkTime(unix int64) time.Time {
+	if unix <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(unix, 0)
+}
+
+// syncRepository downloads new and updated entities and upserts them through
+// the uploader
+func syncRepository(ctx context.Context, downloader base.Downloader, uploader base.Uploader, opts base.MigrateOptions, messenger base.Messenger, marks syncWatermarks) error {
+	if messenger == nil {
+		messenger = base.NilMessenger
+	}
+
+	if opts.Issues {
+		log.Trace("syncing issues")
+		messenger("repo.migrate.syncing_issues")
+		issueBatchSize := uploader.MaxBatchInsertSize("issue")
+
+		for i := 1; ; i++ {
+			issues, isEnd, err := downloader.GetNewIssues(ctx, i, issueBatchSize, marks.issues)
+			if err != nil {
+				if !base.IsErrNotSupported(err) {
+					return err
+				}
+				log.Warn("syncing issues is not supported, ignored")
+				break
+			}
+
+			if err := uploader.PatchIssues(ctx, issues...); err != nil {
+				return err
+			}
+
+			if isEnd {
+				break
+			}
+		}
+	}
+
+	// pull requests updated since the watermark, kept so their reviews (which
+	// GitHub cannot filter by time) are only refetched for what changed
+	var syncedPRs []*base.PullRequest
+	if opts.PullRequests {
+		log.Trace("syncing pull requests")
+		messenger("repo.migrate.syncing_pulls")
+		prBatchSize := uploader.MaxBatchInsertSize("pullrequest")
+
+		for i := 1; ; i++ {
+			prs, isEnd, err := downloader.GetNewPullRequests(ctx, i, prBatchSize, marks.pulls)
+			if err != nil {
+				if !base.IsErrNotSupported(err) {
+					return err
+				}
+				log.Warn("syncing pull requests is not supported, ignored")
+				break
+			}
+
+			if err := uploader.PatchPullRequests(ctx, prs...); err != nil {
+				return err
+			}
+			syncedPRs = append(syncedPRs, prs...)
+
+			if isEnd {
+				break
+			}
+		}
+	}
+
+	if opts.Comments {
+		log.Trace("syncing comments")
+		messenger("repo.migrate.syncing_comments")
+		commentBatchSize := uploader.MaxBatchInsertSize("comment")
+
+		for i := 1; ; i++ {
+			comments, isEnd, err := downloader.GetAllNewComments(ctx, i, commentBatchSize, marks.comments)
+			if err != nil {
+				if !base.IsErrNotSupported(err) {
+					return err
+				}
+				log.Warn("syncing comments is not supported, ignored")
+				break
+			}
+
+			if err := uploader.PatchComments(ctx, comments...); err != nil {
+				return err
+			}
+
+			if isEnd {
+				break
+			}
+		}
+	}
+
+	if opts.PullRequests {
+		log.Trace("syncing reviews")
+		messenger("repo.migrate.syncing_reviews")
+		reviewBatchSize := uploader.MaxBatchInsertSize("review")
+
+		reviews := make([]*base.Review, 0, reviewBatchSize)
+		for _, pr := range syncedPRs {
+			prReviews, err := downloader.GetNewReviews(ctx, pr, marks.pulls)
+			if err != nil {
+				if !base.IsErrNotSupported(err) {
+					return err
+				}
+				log.Warn("syncing reviews is not supported, ignored")
+				break
+			}
+			reviews = append(reviews, prReviews...)
+
+			if len(reviews) >= reviewBatchSize {
+				if err := uploader.PatchReviews(ctx, reviews...); err != nil {
+					return err
+				}
+				reviews = reviews[:0]
+			}
+		}
+		if len(reviews) > 0 {
+			if err := uploader.PatchReviews(ctx, reviews...); err != nil {
+				return err
 			}
 		}
 	}
