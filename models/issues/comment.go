@@ -27,7 +27,6 @@ import (
 	"gitea.dev/modules/markup"
 	"gitea.dev/modules/optional"
 	"gitea.dev/modules/references"
-	"gitea.dev/modules/setting"
 	"gitea.dev/modules/structs"
 	"gitea.dev/modules/timeutil"
 	"gitea.dev/modules/translation"
@@ -259,6 +258,7 @@ type Comment struct {
 	Poster           *user_model.User `xorm:"-"`
 	OriginalAuthor   string
 	OriginalAuthorID int64
+	OriginalID       int64  `xorm:"INDEX"` // the comment id on the remote source, only set for synced mirror comments
 	IssueID          int64  `xorm:"INDEX"`
 	Issue            *Issue `xorm:"-"`
 	LabelID          int64
@@ -630,18 +630,11 @@ func UpdateCommentAttachments(ctx context.Context, c *Comment, uuids []string) e
 		return nil
 	}
 	return db.WithTx(ctx, func(ctx context.Context) error {
-		issue, err := GetIssueByID(ctx, c.IssueID)
-		if err != nil {
-			return err
-		}
 		attachments, err := repo_model.GetAttachmentsByUUIDs(ctx, uuids)
 		if err != nil {
 			return fmt.Errorf("getAttachmentsByUUIDs [uuids: %v]: %w", uuids, err)
 		}
 		for i := range attachments {
-			if err := validateAttachmentForIssue(ctx, issue, attachments[i]); err != nil {
-				return err
-			}
 			attachments[i].IssueID = c.IssueID
 			attachments[i].CommentID = c.ID
 			if err := repo_model.UpdateAttachment(ctx, attachments[i]); err != nil {
@@ -654,17 +647,35 @@ func UpdateCommentAttachments(ctx context.Context, c *Comment, uuids []string) e
 }
 
 // LoadAssigneeUserAndTeam if comment.Type is CommentTypeAssignees, then load assignees
-func (c *Comment) LoadAssigneeUserAndTeam(ctx context.Context) (err error) {
+func (c *Comment) LoadAssigneeUserAndTeam(ctx context.Context) error {
+	var err error
+
 	if c.AssigneeID > 0 && c.Assignee == nil {
-		_, c.Assignee, err = user_model.GetPossibleUserByID(ctx, c.AssigneeID)
+		c.Assignee, err = user_model.GetUserByID(ctx, c.AssigneeID)
 		if err != nil {
+			if !user_model.IsErrUserNotExist(err) {
+				return err
+			}
+			c.Assignee = user_model.NewGhostUser()
+		}
+	} else if c.AssigneeTeamID > 0 && c.AssigneeTeam == nil {
+		if err = c.LoadIssue(ctx); err != nil {
 			return err
 		}
-	}
-	if c.AssigneeTeamID > 0 && c.AssigneeTeam == nil {
-		_, c.AssigneeTeam, err = organization.GetPossibleTeamByID(ctx, c.AssigneeTeamID)
-		if err != nil {
+
+		if err = c.Issue.LoadRepo(ctx); err != nil {
 			return err
+		}
+
+		if err = c.Issue.Repo.LoadOwner(ctx); err != nil {
+			return err
+		}
+
+		if c.Issue.Repo.Owner.IsOrganization() {
+			c.AssigneeTeam, err = organization.GetTeamByID(ctx, c.AssigneeTeamID)
+			if err != nil && !organization.IsErrTeamNotExist(err) {
+				return err
+			}
 		}
 	}
 	return nil
@@ -788,7 +799,8 @@ func (c *Comment) MetaSpecialDoerTr(locale translation.Locale) template.HTML {
 }
 
 func (c *Comment) TimelineRequestedReviewTr(locale translation.Locale, createdStr template.HTML) template.HTML {
-	if c.Assignee != nil {
+	if c.AssigneeID > 0 {
+		// it guarantees LoadAssigneeUserAndTeam has been called, and c.Assignee is Ghost user but not nil if the user doesn't exist
 		if c.RemovedAssignee {
 			if c.PosterID == c.AssigneeID {
 				return locale.Tr("repo.issues.review.remove_review_request_self", createdStr)
@@ -797,20 +809,14 @@ func (c *Comment) TimelineRequestedReviewTr(locale translation.Locale, createdSt
 		}
 		return locale.Tr("repo.issues.review.add_review_request", c.Assignee.GetDisplayName(), createdStr)
 	}
+	teamName := "Ghost Team"
 	if c.AssigneeTeam != nil {
-		if c.RemovedAssignee {
-			return locale.Tr("repo.issues.review.remove_review_request", c.AssigneeTeam.Name, createdStr)
-		}
-		return locale.Tr("repo.issues.review.add_review_request", c.AssigneeTeam.Name, createdStr)
+		teamName = c.AssigneeTeam.Name
 	}
-
-	// impossible fallback
-	assigneePrompt := fmt.Sprintf("(AssigneeID=%d, AssigneeTeamID=%d)", c.AssigneeID, c.AssigneeTeam.ID)
-	setting.PanicInDevOrTesting("unknown timeline pull request review event comment: id=%d, %s", c.ID, assigneePrompt)
 	if c.RemovedAssignee {
-		return locale.Tr("repo.issues.review.remove_review_request", assigneePrompt, createdStr)
+		return locale.Tr("repo.issues.review.remove_review_request", teamName, createdStr)
 	}
-	return locale.Tr("repo.issues.review.add_review_request", assigneePrompt, createdStr)
+	return locale.Tr("repo.issues.review.add_review_request", teamName, createdStr)
 }
 
 // CreateComment creates comment with context
@@ -1043,6 +1049,19 @@ func GetCommentByID(ctx context.Context, id int64) (*Comment, error) {
 		return nil, ErrCommentNotExist{id, 0}
 	}
 	return c, nil
+}
+
+// GetMaxCommentUpdatedUnix returns the latest updated_unix among a repository's
+// comments, zero when there are none. It is the resume watermark for the comment
+// stream of a resumable mirror sync (walked in updated-ascending order), tracked
+// independently of the issue and pull-request streams.
+func GetMaxCommentUpdatedUnix(ctx context.Context, repoID int64) (int64, error) {
+	var maxUpdated int64
+	if _, err := db.GetEngine(ctx).Table("comment").Where("issue_id IN (SELECT id FROM issue WHERE repo_id = ?)", repoID).
+		Select("COALESCE(MAX(updated_unix), 0)").Get(&maxUpdated); err != nil {
+		return 0, err
+	}
+	return maxUpdated, nil
 }
 
 func GetCommentWithRepoID(ctx context.Context, repoID, commentID int64) (*Comment, error) {
@@ -1347,4 +1366,77 @@ func InsertIssueComments(ctx context.Context, comments []*Comment) error {
 		}
 		return nil
 	})
+}
+
+// UpsertIssueComments inserts new comments and updates existing ones, matching
+// on the remote comment id (OriginalID). It is used when syncing a migrated
+// repository, where every comment carries a non-zero OriginalID, so a re-sync
+// updates comments in place instead of duplicating them.
+func UpsertIssueComments(ctx context.Context, comments []*Comment) error {
+	if len(comments) == 0 {
+		return nil
+	}
+
+	issueIDs := container.FilterSlice(comments, func(comment *Comment) (int64, bool) {
+		return comment.IssueID, true
+	})
+
+	return db.WithTx(ctx, func(ctx context.Context) error {
+		sess := db.GetEngine(ctx)
+		for _, comment := range comments {
+			existing := &Comment{}
+			has, err := sess.Where("issue_id = ? AND original_id = ?", comment.IssueID, comment.OriginalID).Get(existing)
+			if err != nil {
+				return err
+			}
+			if !has {
+				if _, err := sess.NoAutoTime().Insert(comment); err != nil {
+					return err
+				}
+			} else {
+				// carry the existing row id so the update targets it and the
+				// reactions below attach to the right comment
+				comment.ID = existing.ID
+				if _, err := sess.NoAutoTime().ID(comment.ID).AllCols().Update(comment); err != nil {
+					return err
+				}
+			}
+
+			if err := upsertCommentReactions(sess, comment); err != nil {
+				return err
+			}
+		}
+
+		for _, issueID := range issueIDs {
+			if err := UpdateIssueNumComments(ctx, issueID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// upsertCommentReactions inserts or updates a synced comment's reactions,
+// matching on the reaction's natural key (issue_id, comment_id, type)
+func upsertCommentReactions(sess db.Engine, comment *Comment) error {
+	for _, reaction := range comment.Reactions {
+		reaction.IssueID = comment.IssueID
+		reaction.CommentID = comment.ID
+		existing := &Reaction{}
+		has, err := sess.Where("issue_id = ? AND comment_id = ? AND type = ?", reaction.IssueID, reaction.CommentID, reaction.Type).Get(existing)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := sess.Insert(reaction); err != nil {
+				return err
+			}
+		} else {
+			reaction.ID = existing.ID
+			if _, err := sess.ID(reaction.ID).AllCols().Update(reaction); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

@@ -23,6 +23,7 @@ import (
 	"gitea.dev/modules/timeutil"
 	"gitea.dev/modules/util"
 	"gitea.dev/services/migrations"
+	mirror_service "gitea.dev/services/mirror"
 	notify_service "gitea.dev/services/notify"
 )
 
@@ -132,6 +133,16 @@ func runMigrateTask(ctx context.Context, t *admin_model.Task) (err error) {
 
 	if err == nil {
 		log.Trace("Repository migrated [%d]: %s/%s", t.Repo.ID, t.Owner.Name, t.Repo.Name)
+		// The initial migrate only clones git; for a metadata mirror the issue/PR
+		// backfill runs on a mirror sync (#20311). Enqueue one immediately so a
+		// freshly created mirror populates right away instead of waiting for the next
+		// update_mirrors cron tick (~10m). Gate on the migrate OPTIONS (opts.Mirror +
+		// SyncsMetadata), not t.Repo.IsMirror — the returned repo object doesn't carry
+		// the mirror flag reliably, which is why the immediate sync never fired.
+		if opts.Mirror && (opts.Issues || opts.PullRequests) {
+			log.Info("migrate: initiating immediate metadata sync for mirror [%d] %s/%s", t.Repo.ID, t.Owner.Name, t.Repo.Name)
+			mirror_service.AddPullMirrorToQueue(t.Repo.ID)
+		}
 		return nil
 	}
 
