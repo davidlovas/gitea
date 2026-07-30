@@ -527,7 +527,7 @@ func SyncRepository(ctx context.Context, doer *user_model.User, repo *repo_model
 	uploader.gitServiceType = opts.GitServiceType
 	uploader.repo = repo
 	uploader.sameApp = strings.HasPrefix(repo.OriginalURL, setting.AppURL)
-	uploader.gitRepo, err = git.OpenRepository(repo)
+	uploader.gitRepo, err = git.OpenRepository(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
