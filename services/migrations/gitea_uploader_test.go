@@ -338,7 +338,7 @@ func TestGiteaSyncRepository(t *testing.T) {
 	uploader.gitServiceType = structs.GithubService
 	uploader.repo = repo
 	var err error
-	uploader.gitRepo, err = git.OpenRepository(repo)
+	uploader.gitRepo, err = git.OpenRepository(ctx, repo)
 	require.NoError(t, err)
 	defer uploader.Close()
 	require.NoError(t, uploader.loadExistingLabelsAndMilestones(ctx))
