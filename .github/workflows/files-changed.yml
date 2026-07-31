@@ -30,6 +30,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read # needed by dorny/paths-filter to read PR files; org default token perms are restricted
 
 jobs:
   detect:

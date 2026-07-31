@@ -9,6 +9,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read # needed by dorny/paths-filter (files-changed) to read PR files; org default token perms are restricted
 
 jobs:
   files-changed:
