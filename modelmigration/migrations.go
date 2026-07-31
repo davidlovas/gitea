@@ -415,9 +415,6 @@ func prepareMigrationTasks() []*migration {
 		newMigration(340, "Add ContinueOnError column to ActionRunJob", v1_27.AddContinueOnErrorToActionRunJob),
 		newMigration(341, "Convert legacy MSSQL DATETIME columns to DATETIME2", v1_27.FixLegacyMSSQLDateTimeColumns),
 		newMigration(342, "Add scoped workflows schema", v1_27.AddScopedWorkflowsSchema),
-		newMigration(343, "Add original_id column to comment and review for incremental mirror sync", v1_27.AddOriginalIDToCommentAndReview),
-		newMigration(344, "Add metadata sync options to mirror", v1_27.AddMetadataSyncOptionsToMirror),
-		newMigration(345, "Add head repo owner to pull request", v1_27.AddHeadRepoOwnerToPullRequest),
 		// Gitea 1.27.0 ends at migration ID number 342 (database version 343)
 
 		newMigration(343, "Add max_parallel column to action_run_job", v28.AddMaxParallelToActionRunJob),
@@ -441,6 +438,13 @@ func prepareMigrationTasks() []*migration {
 		newMigration(359, "Add stage and number columns to action_task_step", v29.AddStageAndNumberToActionTaskStep),
 		newMigration(360, "Move branch protection settings to JSON", v29.MoveBranchProtectionConfigToJSON),
 		newMigration(361, "Drop legacy commit_id column from comment", v29.DropCommentCommitID),
+
+		// Metadata-mirror migrations (fork). Renumbered to follow upstream's latest
+		// migration ID so the list stays monotonic — upstream's v29 batch grew to
+		// 361, so these trail it at 362-364 (were 361-363).
+		newMigration(362, "Add original_id column to comment and review for incremental mirror sync", v1_27.AddOriginalIDToCommentAndReview),
+		newMigration(363, "Add metadata sync options to mirror", v1_27.AddMetadataSyncOptionsToMirror),
+		newMigration(364, "Add head repo owner to pull request", v1_27.AddHeadRepoOwnerToPullRequest),
 	}
 	return preparedMigrations
 }
