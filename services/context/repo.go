@@ -451,7 +451,7 @@ func repoAssignmentLegacy(ctx *Context, data *repoAssignmentPrepareDataStruct) {
 		pullMirror, err := repo_model.GetMirrorByRepoID(ctx, repo.ID)
 		if err == nil {
 			ctx.Data["PullMirror"] = pullMirror
-			isReadOnlyMirror, _ := ctx.Repo.Repository.IsMirrorWithMetadata(ctx)
+			isReadOnlyMirror, _ := repo.IsMirrorWithMetadata(ctx)
 			ctx.Data["IsReadOnlyMirror"] = isReadOnlyMirror
 		} else if err != repo_model.ErrMirrorNotExist {
 			ctx.ServerError("GetMirrorByRepoID", err)
