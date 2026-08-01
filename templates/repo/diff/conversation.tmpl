@@ -47,7 +47,7 @@
 						{{svg "octicon-arrow-down" 12}} {{ctx.Locale.Tr "repo.issues.next"}}
 					</button>
 				</div>
-				{{if and $.CanMarkConversation $hasReview (not $isReviewPending)}}
+				{{if and $.CanMarkConversation $hasReview (not $isReviewPending) (not $.IsReadOnlyMirror)}}
 					<button class="ui icon tiny basic button resolve-conversation" data-origin="diff" data-action="{{if not $resolved}}Resolve{{else}}UnResolve{{end}}" data-comment-id="{{$comment.ID}}" data-update-url="{{$.RepoLink}}/issues/resolve_conversation">
 						{{if $resolved}}
 							{{ctx.Locale.Tr "repo.issues.review.un_resolve_conversation"}}
@@ -56,13 +56,15 @@
 						{{end}}
 					</button>
 				{{end}}
-				{{if and $.SignedUserID (not $.Repository.IsArchived)}}
+				{{if and $.SignedUserID (not $.Repository.IsArchived) (not $.IsReadOnlyMirror)}}
 					<button class="comment-form-reply ui primary icon tiny button">
 						{{svg "octicon-reply" 12}}{{ctx.Locale.Tr "repo.diff.comment.reply"}}
 					</button>
 				{{end}}
 			</div>
-			{{template "repo/diff/comment_form_datahandler" dict "hidden" true "reply" $comment.ReviewID "root" $ "comment" $comment}}
+			{{if not $.IsReadOnlyMirror}}
+				{{template "repo/diff/comment_form_datahandler" dict "hidden" true "reply" $comment.ReviewID "root" $ "comment" $comment}}
+			{{end}}
 		</div>
 	</div>
 {{else}}
