@@ -609,6 +609,17 @@ func (repo *Repository) IsMirrorWithMetadata(ctx context.Context) (bool, error) 
 	return mirror.SyncIssues || mirror.SyncPullRequests, nil
 }
 
+// CanShowPulls reports whether the repository's pull requests should be shown.
+// Normal repos: whenever they can accept pulls. Metadata mirrors: they can't
+// accept new pulls, but they reflect their remote's pull requests read-only, so
+// the PR tab/routes must be available even though CanEnablePulls() is false.
+func (repo *Repository) CanShowPulls(ctx context.Context) (bool, error) {
+	if repo.CanEnablePulls() {
+		return true, nil
+	}
+	return repo.IsMirrorWithMetadata(ctx)
+}
+
 // DescriptionHTML does special handles to description and return HTML string.
 func (repo *Repository) DescriptionHTML(ctx context.Context) template.HTML {
 	return markup.PostProcessDescriptionHTML(markup.NewRenderContext(ctx), htmlutil.EscapeString(repo.Description))
