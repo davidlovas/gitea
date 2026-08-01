@@ -86,7 +86,7 @@ The variables in "ctx.Data" are different in each case, making this template fra
 								</div>
 								<div class="comment-header-right">
 									{{template "repo/issue/view_content/show_role" dict "ShowRole" .ShowRole}}
-									{{if not $.Repository.IsArchived}}
+									{{if and (not $.Repository.IsArchived) (not $.IsReadOnlyMirror)}}
 										{{template "repo/issue/view_content/add_reaction" dict "ActionURL" (printf "%s/comments/%d/reactions" $.RepoLink .ID)}}
 										{{template "repo/issue/view_content/context_menu" dict "item" . "delete" true "issue" true "diff" true "IsCommentPoster" (and $.IsSigned (eq $.SignedUserID .PosterID))}}
 									{{end}}
@@ -124,7 +124,7 @@ The variables in "ctx.Data" are different in each case, making this template fra
 					{{end}}
 				</div>
 				<div class="flex-text-block">
-					{{if and $.CanMarkConversation $hasReview (not $isReviewPending)}}
+					{{if and $.CanMarkConversation $hasReview (not $isReviewPending) (not $.IsReadOnlyMirror)}}
 						<button class="ui tiny basic button resolve-conversation" data-origin="timeline" data-action="{{if not $resolved}}Resolve{{else}}UnResolve{{end}}" data-comment-id="{{$comment.ID}}" data-update-url="{{$.RepoLink}}/issues/resolve_conversation">
 							{{if $resolved}}
 								{{ctx.Locale.Tr "repo.issues.review.un_resolve_conversation"}}
@@ -133,14 +133,16 @@ The variables in "ctx.Data" are different in each case, making this template fra
 							{{end}}
 						</button>
 					{{end}}
-					{{if and $.SignedUserID (not $.Repository.IsArchived)}}
+					{{if and $.SignedUserID (not $.Repository.IsArchived) (not $.IsReadOnlyMirror)}}
 						<button class="comment-form-reply ui primary icon tiny button">
 							{{svg "octicon-reply" 12}}{{ctx.Locale.Tr "repo.diff.comment.reply"}}
 						</button>
 					{{end}}
 				</div>
 			</div>
-			{{template "repo/diff/comment_form_datahandler" dict "hidden" true "reply" $comment.ReviewID "root" $ "comment" $comment}}
+			{{if not $.IsReadOnlyMirror}}
+				{{template "repo/diff/comment_form_datahandler" dict "hidden" true "reply" $comment.ReviewID "root" $ "comment" $comment}}
+			{{end}}
 		</div>
 	</div>
 {{else}}
