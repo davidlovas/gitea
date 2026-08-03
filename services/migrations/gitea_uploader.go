@@ -1082,15 +1082,18 @@ func (g *GiteaLocalUploader) updateGitForPullRequest(ctx context.Context, pr *ba
 }
 
 func (g *GiteaLocalUploader) newPullRequest(ctx context.Context, pr *base.PullRequest) (*issues_model.PullRequest, error) {
-	var labels []*issues_model.Label
-	for _, label := range pr.Labels {
-		lb, ok := g.labels[label.Name]
-		if ok {
-			labels = append(labels, lb)
-		}
+	// Create any labels/milestones this PR carries but that weren't separately
+	// imported (mirrors the issue path — otherwise PR-only labels such as the
+	// LGTM-automation lgtm/* set are silently dropped).
+	labels, err := g.ensureLabels(ctx, pr.Labels)
+	if err != nil {
+		return nil, err
 	}
 
-	milestoneID := g.milestones[pr.Milestone]
+	milestoneID, err := g.ensureMilestone(ctx, pr.Milestone)
+	if err != nil {
+		return nil, err
+	}
 
 	head, err := g.updateGitForPullRequest(ctx, pr)
 	if err != nil {
