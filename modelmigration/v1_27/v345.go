@@ -4,12 +4,14 @@
 package v1_27
 
 import (
+	"context"
+
 	"gitea.dev/modelmigration/base"
 
 	"xorm.io/xorm"
 )
 
-func AddHeadRepoOwnerToPullRequest(x base.EngineMigration) error {
+func AddHeadRepoOwnerToPullRequest(_ context.Context, x base.EngineMigration) error {
 	type PullRequest struct {
 		HeadRepoOwner string `xorm:"NOT NULL DEFAULT ''"`
 	}
