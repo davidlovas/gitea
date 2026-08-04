@@ -18,6 +18,11 @@ var Migrations = struct {
 	// = false falls back to the REST downloader (e.g. for a server or token that
 	// cannot use the GraphQL API). Non-GitHub migrations are unaffected.
 	UseGraphQL bool
+	// SyncReactionsForMirror opts metadata mirror syncs into fetching issue/PR/
+	// comment reactions too. Off by default because reactions are the heaviest,
+	// lowest-value metadata for a read-only mirror; set
+	// [migrations] SYNC_REACTIONS_FOR_MIRROR = true to include them.
+	SyncReactionsForMirror bool
 }{
 	MaxAttempts:  3,
 	RetryBackoff: 3,
@@ -34,4 +39,5 @@ func loadMigrationsFrom(rootCfg ConfigProvider) {
 	Migrations.AllowLocalNetworks = sec.Key("ALLOW_LOCALNETWORKS").MustBool(false)
 	Migrations.SkipTLSVerify = sec.Key("SKIP_TLS_VERIFY").MustBool(false)
 	Migrations.UseGraphQL = sec.Key("USE_GRAPHQL").MustBool(true)
+	Migrations.SyncReactionsForMirror = sec.Key("SYNC_REACTIONS_FOR_MIRROR").MustBool(false)
 }
