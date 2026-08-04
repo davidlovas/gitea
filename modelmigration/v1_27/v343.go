@@ -4,12 +4,14 @@
 package v1_27
 
 import (
+	"context"
+
 	"gitea.dev/modelmigration/base"
 
 	"xorm.io/xorm"
 )
 
-func AddOriginalIDToCommentAndReview(x base.EngineMigration) error {
+func AddOriginalIDToCommentAndReview(_ context.Context, x base.EngineMigration) error {
 	type Comment struct {
 		OriginalID int64 `xorm:"index"`
 	}
