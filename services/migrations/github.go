@@ -56,6 +56,7 @@ func (f *GithubDownloaderV3Factory) New(ctx context.Context, opts base.MigrateOp
 	if err != nil {
 		return nil, err
 	}
+	downloader.SkipReactions = opts.SkipReactions
 	// GitHub rejects anonymous GraphQL requests, and the fast path only batches the
 	// issue and pull-request sweeps (their comments ride along). Anything else, such
 	// as an anonymous public-repository migration or a comments-only dump, stays on
