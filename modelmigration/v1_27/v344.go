@@ -4,12 +4,14 @@
 package v1_27
 
 import (
+	"context"
+
 	"gitea.dev/modelmigration/base"
 
 	"xorm.io/xorm"
 )
 
-func AddMetadataSyncOptionsToMirror(x base.EngineMigration) error {
+func AddMetadataSyncOptionsToMirror(_ context.Context, x base.EngineMigration) error {
 	type Mirror struct {
 		SyncIssues       bool `xorm:"NOT NULL DEFAULT false"`
 		SyncPullRequests bool `xorm:"NOT NULL DEFAULT false"`
