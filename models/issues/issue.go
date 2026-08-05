@@ -833,6 +833,13 @@ func updateMigratedIssue(ctx context.Context, issue *Issue) error {
 	if _, err := sess.NoAutoTime().ID(issue.ID).AllCols().Update(issue); err != nil {
 		return err
 	}
+	// xorm silently drops `updated`-tagged columns from an UPDATE when
+	// auto-time is off — even under AllCols — so the remote timestamp must be
+	// written explicitly. It is the sync's resume watermark: without it an
+	// interrupted sweep restarts from zero instead of resuming.
+	if _, err := sess.NoAutoTime().ID(issue.ID).Cols("updated_unix").Update(&Issue{UpdatedUnix: issue.UpdatedUnix}); err != nil {
+		return err
+	}
 
 	if _, err := sess.Where("issue_id = ?", issue.ID).Delete(&IssueLabel{}); err != nil {
 		return err
