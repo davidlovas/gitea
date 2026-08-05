@@ -21,6 +21,7 @@ import (
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/git"
 	"gitea.dev/modules/git/gitcmd"
+	issue_indexer "gitea.dev/modules/indexer/issues"
 	"gitea.dev/modules/label"
 	"gitea.dev/modules/log"
 	base "gitea.dev/modules/migration"
@@ -478,6 +479,9 @@ func (g *GiteaLocalUploader) PatchIssues(ctx context.Context, issues ...*base.Is
 
 		for _, is := range iss {
 			g.issues[is.Index] = is
+			// the sync writes rows directly, so no notifier fires — feed the
+			// keyword-search index here or synced content is never searchable
+			issue_indexer.UpdateIssueIndexer(ctx, is.ID)
 		}
 	}
 
@@ -744,7 +748,20 @@ func (g *GiteaLocalUploader) PatchComments(ctx context.Context, comments ...*bas
 	if len(cms) == 0 {
 		return nil
 	}
-	return issues_model.UpsertIssueComments(ctx, cms)
+	if err := issues_model.UpsertIssueComments(ctx, cms); err != nil {
+		return err
+	}
+	// see PatchIssues: keep the keyword-search index fed (comment bodies are
+	// part of the indexed document, keyed by issue)
+	seen := make(map[int64]struct{}, len(cms))
+	for _, c := range cms {
+		if _, ok := seen[c.IssueID]; ok {
+			continue
+		}
+		seen[c.IssueID] = struct{}{}
+		issue_indexer.UpdateIssueIndexer(ctx, c.IssueID)
+	}
+	return nil
 }
 
 func (g *GiteaLocalUploader) prepareComments(ctx context.Context, comments ...*base.Comment) ([]*issues_model.Comment, error) {
@@ -868,6 +885,8 @@ func (g *GiteaLocalUploader) CreatePullRequests(ctx context.Context, prs ...*bas
 	}
 	for _, pr := range gprs {
 		g.issues[pr.Issue.Index] = pr.Issue
+		// see PatchIssues: keep the keyword-search index fed
+		issue_indexer.UpdateIssueIndexer(ctx, pr.Issue.ID)
 		pull.StartPullRequestCheckImmediately(ctx, pr)
 	}
 	return nil
@@ -886,6 +905,8 @@ func (g *GiteaLocalUploader) PatchPullRequests(ctx context.Context, prs ...*base
 	}
 	for _, pr := range gprs {
 		g.issues[pr.Issue.Index] = pr.Issue
+		// see PatchIssues: keep the keyword-search index fed
+		issue_indexer.UpdateIssueIndexer(ctx, pr.Issue.ID)
 		pull.StartPullRequestCheckImmediately(ctx, pr)
 	}
 	return nil
