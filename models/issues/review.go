@@ -729,6 +729,12 @@ func UpsertReviews(ctx context.Context, reviews []*Review) error {
 				if _, err := sess.NoAutoTime().ID(review.ID).AllCols().Update(review); err != nil {
 					return err
 				}
+				// xorm silently drops `updated`-tagged columns from an UPDATE
+				// when auto-time is off — even under AllCols — so the remote
+				// timestamp must be written explicitly.
+				if _, err := sess.NoAutoTime().ID(review.ID).Cols("updated_unix").Update(&Review{UpdatedUnix: review.UpdatedUnix}); err != nil {
+					return err
+				}
 			}
 
 			// the review mirrored into the comment timeline
@@ -767,7 +773,13 @@ func upsertReviewComment(sess db.Engine, comment *Comment) error {
 		return err
 	}
 	comment.ID = existing.ID
-	_, err = sess.NoAutoTime().ID(comment.ID).AllCols().Update(comment)
+	if _, err := sess.NoAutoTime().ID(comment.ID).AllCols().Update(comment); err != nil {
+		return err
+	}
+	// xorm silently drops `updated`-tagged columns from an UPDATE when
+	// auto-time is off — even under AllCols — so the remote timestamp must be
+	// written explicitly.
+	_, err = sess.NoAutoTime().ID(comment.ID).Cols("updated_unix").Update(&Comment{UpdatedUnix: comment.UpdatedUnix})
 	return err
 }
 

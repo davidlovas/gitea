@@ -1404,6 +1404,13 @@ func UpsertIssueComments(ctx context.Context, comments []*Comment) error {
 				if _, err := sess.NoAutoTime().ID(comment.ID).AllCols().Update(comment); err != nil {
 					return err
 				}
+				// xorm silently drops `updated`-tagged columns from an UPDATE
+				// when auto-time is off — even under AllCols — so the remote
+				// timestamp (the comment stream's resume watermark) must be
+				// written explicitly.
+				if _, err := sess.NoAutoTime().ID(comment.ID).Cols("updated_unix").Update(&Comment{UpdatedUnix: comment.UpdatedUnix}); err != nil {
+					return err
+				}
 			}
 
 			if err := upsertCommentReactions(sess, comment); err != nil {
