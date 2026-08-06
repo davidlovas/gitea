@@ -35,8 +35,6 @@ type Downloader interface {
 	GetNewPullRequests(ctx context.Context, page, perPage int, updatedAfter time.Time) ([]*PullRequest, bool, error)
 	// GetNewComments returns an issue's or pull request's comments updated after the given time
 	GetNewComments(ctx context.Context, commentable Commentable, updatedAfter time.Time) ([]*Comment, bool, error)
-	// GetAllNewComments returns all repository comments updated after the given time, paginated
-	GetAllNewComments(ctx context.Context, page, perPage int, updatedAfter time.Time) ([]*Comment, bool, error)
 	// GetNewReviews returns a pull request's reviews updated after the given time
 	GetNewReviews(ctx context.Context, reviewable Reviewable, updatedAfter time.Time) ([]*Review, error)
 }
