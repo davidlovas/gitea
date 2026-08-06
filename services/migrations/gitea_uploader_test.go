@@ -298,17 +298,14 @@ func (d *syncTestDownloader) GetNewPullRequests(_ context.Context, page, _ int, 
 	return prs, true, nil
 }
 
-func (d *syncTestDownloader) GetAllNewComments(_ context.Context, page, _ int, updatedAfter time.Time) ([]*base.Comment, bool, error) {
-	if page > 1 {
-		return nil, true, nil
-	}
+func (d *syncTestDownloader) GetNewComments(_ context.Context, commentable base.Commentable, updatedAfter time.Time) ([]*base.Comment, bool, error) {
 	comments := make([]*base.Comment, 0, len(d.comments))
 	for _, comment := range d.comments {
-		if !comment.Updated.Before(updatedAfter) {
+		if comment.IssueIndex == commentable.GetForeignIndex() && !comment.Updated.Before(updatedAfter) {
 			comments = append(comments, comment)
 		}
 	}
-	return comments, true, nil
+	return comments, false, nil
 }
 
 func (d *syncTestDownloader) GetNewReviews(_ context.Context, reviewable base.Reviewable, _ time.Time) ([]*base.Review, error) {
