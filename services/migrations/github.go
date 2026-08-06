@@ -920,6 +920,41 @@ func (g *GithubDownloaderV3) convertGithubReviewComments(ctx context.Context, cs
 }
 
 // GetReviews returns pull requests review
+// nilIfZero returns a pointer to t, or nil when t is the zero time. The comment
+// APIs take a *time.Time `since`; a pointer to the zero time would be serialized
+// as since=0001-01-01, which GitHub rejects with 422, so a zero time (first
+// sync, no watermark) must be sent as nil to omit the filter and fetch all.
+func nilIfZero(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
+}
+
+// GetNewComments returns an issue's or pull request's comments updated at or
+// after the given time
+func (g *GithubDownloaderV3) GetNewComments(ctx context.Context, commentable base.Commentable, updatedAfter time.Time) ([]*base.Comment, bool, error) {
+	if g.gqlComments != nil {
+		// GraphQL fast path: the entity sweep already fetched its comments;
+		// serve them from the cache instead of a second round of API calls.
+		return g.gqlComments[commentable.GetForeignIndex()], false, nil
+	}
+	comments, err := g.getCommentsSince(ctx, commentable, nilIfZero(updatedAfter))
+	return comments, false, err
+}
+
+// GetNewReviews returns a pull request's reviews updated at or after the given
+// time. GitHub's reviews API has no since filter, so all reviews are refetched.
+func (g *GithubDownloaderV3) GetNewReviews(ctx context.Context, reviewable base.Reviewable, updatedAfter time.Time) ([]*base.Review, error) {
+	if g.useGraphQL {
+		// GraphQL fast path: reviews (and their inline comments) already came back
+		// with their pull request; serve them from the cache instead of the REST
+		// per-PR ListReviews + per-review ListReviewComments N+1.
+		return g.gqlReviews[reviewable.GetForeignIndex()], nil
+	}
+	return g.getReviewsREST(ctx, reviewable)
+}
+
 func (g *GithubDownloaderV3) GetReviews(ctx context.Context, reviewable base.Reviewable) ([]*base.Review, error) {
 	if g.gqlReviews != nil {
 		// GraphQL fast path: reviews (and their inline comments) already came

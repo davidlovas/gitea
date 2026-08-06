@@ -520,7 +520,7 @@ func SyncRepository(ctx context.Context, doer *user_model.User, repo *repo_model
 	}
 	if !downloader.SupportSyncing() {
 		log.Info("syncing is not supported for repositories of type %v, ignored", opts.GitServiceType)
-		return nil, nil
+		return repo, nil
 	}
 
 	uploader := NewGiteaLocalUploader(ctx, doer, repo.OwnerName, opts.RepoName)
@@ -601,6 +601,23 @@ func watermarkTime(unix int64) time.Time {
 
 // syncRepository downloads new and updated entities and upserts them through
 // the uploader
+// syncEntityComments patches the comments of one just-synced issue or pull
+// request, so comments land page-by-page WITH their entities. A trailing
+// repo-wide comment phase would strand comments if a sync died between the
+// entity pages (which persist the resume watermarks) and that phase: the next
+// run resumes past the entities and never revisits their comments.
+func syncEntityComments(ctx context.Context, downloader base.Downloader, uploader base.Uploader, commentable base.Commentable, since time.Time) error {
+	comments, _, err := downloader.GetNewComments(ctx, commentable, since)
+	if err != nil {
+		if !base.IsErrNotSupported(err) {
+			return err
+		}
+		log.Warn("syncing comments is not supported, ignored")
+		return nil
+	}
+	return uploader.PatchComments(ctx, comments...)
+}
+
 func syncRepository(ctx context.Context, downloader base.Downloader, uploader base.Uploader, opts base.MigrateOptions, messenger base.Messenger, marks syncWatermarks) error {
 	if messenger == nil {
 		messenger = base.NilMessenger
@@ -623,6 +640,13 @@ func syncRepository(ctx context.Context, downloader base.Downloader, uploader ba
 
 			if err := uploader.PatchIssues(ctx, issues...); err != nil {
 				return err
+			}
+			if opts.Comments {
+				for _, issue := range issues {
+					if err := syncEntityComments(ctx, downloader, uploader, issue, marks.comments); err != nil {
+						return err
+					}
+				}
 			}
 
 			if isEnd {
@@ -653,30 +677,12 @@ func syncRepository(ctx context.Context, downloader base.Downloader, uploader ba
 				return err
 			}
 			syncedPRs = append(syncedPRs, prs...)
-
-			if isEnd {
-				break
-			}
-		}
-	}
-
-	if opts.Comments {
-		log.Trace("syncing comments")
-		messenger("repo.migrate.syncing_comments")
-		commentBatchSize := uploader.MaxBatchInsertSize("comment")
-
-		for i := 1; ; i++ {
-			comments, isEnd, err := downloader.GetAllNewComments(ctx, i, commentBatchSize, marks.comments)
-			if err != nil {
-				if !base.IsErrNotSupported(err) {
-					return err
+			if opts.Comments {
+				for _, pr := range prs {
+					if err := syncEntityComments(ctx, downloader, uploader, pr, marks.comments); err != nil {
+						return err
+					}
 				}
-				log.Warn("syncing comments is not supported, ignored")
-				break
-			}
-
-			if err := uploader.PatchComments(ctx, comments...); err != nil {
-				return err
 			}
 
 			if isEnd {

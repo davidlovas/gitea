@@ -105,11 +105,6 @@ func (n NullDownloader) GetNewComments(_ context.Context, commentable Commentabl
 	return nil, false, ErrNotSupported{Entity: "NewComments"}
 }
 
-// GetAllNewComments returns all repository comments updated after the given time, paginated
-func (n NullDownloader) GetAllNewComments(_ context.Context, page, perPage int, updatedAfter time.Time) ([]*Comment, bool, error) {
-	return nil, false, ErrNotSupported{Entity: "AllNewComments"}
-}
-
 // GetNewReviews returns a pull request's reviews updated after the given time
 func (n NullDownloader) GetNewReviews(_ context.Context, reviewable Reviewable, updatedAfter time.Time) ([]*Review, error) {
 	return nil, ErrNotSupported{Entity: "NewReviews"}
