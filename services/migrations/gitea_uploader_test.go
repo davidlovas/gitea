@@ -261,6 +261,7 @@ func TestGiteaUploadTimelineLabelAndMilestoneComments(t *testing.T) {
 	}, 0)
 	unittest.AssertExistsAndLoadBean(t, &issues_model.Comment{IssueID: issue.ID, Type: issues_model.CommentTypeMilestone, MilestoneID: milestone.ID})
 	unittest.AssertExistsAndLoadBean(t, &issues_model.Comment{IssueID: issue.ID, Type: issues_model.CommentTypeMilestone, OldMilestoneID: milestone.ID})
+}
 
 type syncTestDownloader struct {
 	base.NullDownloader
