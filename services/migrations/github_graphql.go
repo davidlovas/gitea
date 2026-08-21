@@ -370,10 +370,19 @@ func (g *GithubDownloaderV3) graphQLIssuesQuery() string {
 		if !g.SkipReactions {
 			issueReactions = "reactions(first:100){totalCount nodes{" + gqlReactionFields + "}}"
 		}
+		// Incremental sync (gqlSince set): filter server-side by the watermark
+		// and walk in UPDATED_AT order so the stored max updated time is an
+		// exact resume point. A full migration walks by creation order.
+		sinceDecl, sinceFilter, orderField := "", "", "CREATED_AT"
+		if !g.gqlSince.IsZero() {
+			sinceDecl = ",$since:DateTime!"
+			sinceFilter = ",filterBy:{since:$since}"
+			orderField = "UPDATED_AT"
+		}
 		g.gqlIssuesQuery = fmt.Sprintf(`
-query($owner:String!,$name:String!,$cursor:String,$first:Int!){
+query($owner:String!,$name:String!,$cursor:String,$first:Int!%[5]s){
   repository(owner:$owner,name:$name){
-    issues(first:$first,after:$cursor,orderBy:{field:CREATED_AT,direction:ASC}){
+    issues(first:$first,after:$cursor,orderBy:{field:%[6]s,direction:ASC}%[7]s){
       pageInfo{hasNextPage endCursor}
       nodes{
         id number title body state createdAt updatedAt closedAt
@@ -394,7 +403,7 @@ query($owner:String!,$name:String!,$cursor:String,$first:Int!){
     }
   }
   rateLimit{cost remaining resetAt}
-}`, gqlActorFields, graphQLLabelPageSize, graphQLAssigneePageSize, issueReactions)
+}`, gqlActorFields, graphQLLabelPageSize, graphQLAssigneePageSize, issueReactions, sinceDecl, orderField, sinceFilter)
 	}
 	return g.gqlIssuesQuery
 }
@@ -498,12 +507,19 @@ func (g *GithubDownloaderV3) getIssuesGraphQL(ctx context.Context, page, perPage
 	if page <= 1 {
 		g.gqlIssuesCursor = ""
 		g.gqlComments = map[int64][]*base.Comment{}
-		log.Info("metadata sync [%s/%s]: issues — full sweep", g.repoOwner, g.repoName)
+		if g.gqlSince.IsZero() {
+			log.Info("metadata sync [%s/%s]: issues — full sweep", g.repoOwner, g.repoName)
+		} else {
+			log.Info("metadata sync [%s/%s]: issues — incremental since %s", g.repoOwner, g.repoName, g.gqlSince.Format(time.RFC3339))
+		}
 	}
 
 	vars := map[string]any{
 		"owner": g.repoOwner,
 		"name":  g.repoName,
+	}
+	if !g.gqlSince.IsZero() {
+		vars["since"] = g.gqlSince.Format(time.RFC3339)
 	}
 	if g.gqlIssuesCursor != "" {
 		vars["cursor"] = g.gqlIssuesCursor
