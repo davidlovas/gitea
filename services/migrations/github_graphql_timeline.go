@@ -22,6 +22,7 @@ package migrations
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"maps"
 	"slices"
 	"sync"
@@ -129,14 +130,21 @@ type gqlTimelineConn struct {
 	Nodes    []gqlTimelineItem `json:"nodes"`
 }
 
+// timelineEventID hashes a timeline event's GraphQL node id (these events carry
+// no databaseId) to a stable positive int64. The incremental sync's upsert keys
+// comments by their remote id, so a re-sync updates each event in place rather
+// than duplicating it.
+func timelineEventID(nodeID string) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(nodeID))
+	return int64(h.Sum64() & 0x7FFFFFFFFFFFFFFF)
+}
+
 // convertTimelineItem maps one timeline event to a typed base.Comment. Returns nil
 // for events that carry no usable payload (e.g. a label event with no label).
-//
-// Index is deliberately left unset: the uploader builds its comment rows from the
-// type, content and timestamps only, so there is nowhere for a remote id to land
-// and no upsert to key off.
 func convertTimelineItem(it *gqlTimelineItem) *base.Comment {
 	c := &base.Comment{
+		Index:      timelineEventID(it.ID),
 		PosterID:   it.Actor.DatabaseID,
 		PosterName: it.Actor.Login,
 		Created:    it.CreatedAt,

@@ -43,10 +43,17 @@ func (g *GithubDownloaderV3) graphQLPullRequestsQuery() string {
 		if !g.SkipReactions {
 			prReactions = "reactions(first:100){totalCount nodes{" + gqlReactionFields + "}}"
 		}
+		// Incremental sync (gqlSince set): the pull-request connection has no
+		// server-side since filter, so walk newest-updated-first and stop at
+		// the watermark. A full migration walks by creation order.
+		order := "{field:CREATED_AT,direction:ASC}"
+		if !g.gqlSince.IsZero() {
+			order = "{field:UPDATED_AT,direction:DESC}"
+		}
 		g.gqlPullRequestsQuery = fmt.Sprintf(`
 query($owner:String!,$name:String!,$cursor:String,$first:Int!){
   repository(owner:$owner,name:$name){
-    pullRequests(first:$first,after:$cursor,orderBy:{field:CREATED_AT,direction:ASC},states:[OPEN,CLOSED,MERGED]){
+    pullRequests(first:$first,after:$cursor,orderBy:%[6]s,states:[OPEN,CLOSED,MERGED]){
       pageInfo{hasNextPage endCursor}
       nodes{
         id number title body state createdAt updatedAt closedAt mergedAt isDraft
@@ -72,7 +79,7 @@ query($owner:String!,$name:String!,$cursor:String,$first:Int!){
     }
   }
   rateLimit{cost remaining resetAt}
-}`, gqlActorFields, graphQLLabelPageSize, graphQLAssigneePageSize, graphQLReviewRequestPageSize, prReactions)
+}`, gqlActorFields, graphQLLabelPageSize, graphQLAssigneePageSize, graphQLReviewRequestPageSize, prReactions, order)
 	}
 	return g.gqlPullRequestsQuery
 }
@@ -207,8 +214,15 @@ func (g *GithubDownloaderV3) getPullRequestsGraphQL(ctx context.Context, page, p
 	// PR-comment reactions are fetched by the batched node-id pass after this
 	// page is built (keyed by comment node id).
 	commentReactionTargets := map[string]*base.Comment{}
+	hitWatermark := false
 	for i := range resp.Repository.PullRequests.Nodes {
 		node := &resp.Repository.PullRequests.Nodes[i]
+		// Incremental sync walks newest-updated-first: past the watermark,
+		// everything remaining is older — stop paging.
+		if !g.gqlSince.IsZero() && node.UpdatedAt.Before(g.gqlSince) {
+			hitWatermark = true
+			break
+		}
 
 		pr, err := g.convertGraphQLPullRequest(ctx, node)
 		if err != nil {
@@ -274,7 +288,7 @@ func (g *GithubDownloaderV3) getPullRequestsGraphQL(ctx context.Context, page, p
 		}
 	}
 
-	return allPRs, !resp.Repository.PullRequests.PageInfo.HasNextPage, nil
+	return allPRs, hitWatermark || !resp.Repository.PullRequests.PageInfo.HasNextPage, nil
 }
 
 func (g *GithubDownloaderV3) reviewsOverflow(node *gqlPullRequest) bool {

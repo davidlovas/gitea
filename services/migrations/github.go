@@ -108,6 +108,10 @@ type GithubDownloaderV3 struct {
 	// gqlComments so GetComments serves issue and PR comments alike.
 	gqlPRCursor string
 	gqlReviews  map[int64][]*base.Review
+	// gqlSince is the incremental sync watermark (zero for a full migration).
+	// When set, the issues query filters server-side by updated-since and the
+	// pull-request sweep walks newest-first and stops at the watermark.
+	gqlSince time.Time
 	// gqlIssuesQuery and gqlPullRequestsQuery cache the built query strings: they
 	// depend only on SkipReactions, so they are assembled once per sync rather
 	// than per page.
@@ -473,6 +477,13 @@ func (g *GithubDownloaderV3) GetIssues(ctx context.Context, page, perPage int) (
 // getIssuesREST returns a page of issues (all of them, oldest created first) over
 // the REST API
 func (g *GithubDownloaderV3) getIssuesREST(ctx context.Context, page, perPage int) ([]*base.Issue, bool, error) {
+	return g.getIssuesRESTSince(ctx, page, perPage, "created", time.Time{})
+}
+
+// getIssuesRESTSince is getIssuesREST with a sort field and updated-since
+// filter, so the incremental sync can walk by update order and resume from its
+// watermark.
+func (g *GithubDownloaderV3) getIssuesRESTSince(ctx context.Context, page, perPage int, sortField string, since time.Time) ([]*base.Issue, bool, error) {
 	if perPage > g.maxPerPage {
 		perPage = g.maxPerPage
 	}
@@ -487,9 +498,10 @@ func (g *GithubDownloaderV3) getIssuesREST(ctx context.Context, page, perPage in
 		g.issuesNextPage = 0
 	}
 	opt := &github.IssueListByRepoOptions{
-		Sort:              "created",
+		Sort:              sortField,
 		Direction:         "asc",
 		State:             "all",
+		Since:             since,
 		ListCursorOptions: github.ListCursorOptions{After: g.issuesCursor},
 		ListOptions:       github.ListOptions{PerPage: perPage, Page: g.issuesNextPage},
 	}
@@ -589,6 +601,13 @@ func (g *GithubDownloaderV3) GetComments(ctx context.Context, commentable base.C
 
 // getComments returns an issue's or pull request's comments over the REST API
 func (g *GithubDownloaderV3) getComments(ctx context.Context, commentable base.Commentable) ([]*base.Comment, error) {
+	return g.getCommentsSince(ctx, commentable, nil)
+}
+
+// getCommentsSince returns an issue's or pull request's comments; a non-nil
+// since returns only those updated at or after it (the incremental sync's
+// per-entity fetch).
+func (g *GithubDownloaderV3) getCommentsSince(ctx context.Context, commentable base.Commentable, since *time.Time) ([]*base.Comment, error) {
 	var (
 		allComments = make([]*base.Comment, 0, g.maxPerPage)
 		created     = "created"
@@ -597,6 +616,7 @@ func (g *GithubDownloaderV3) getComments(ctx context.Context, commentable base.C
 	opt := &github.IssueListCommentsOptions{
 		Sort:      &created,
 		Direction: &asc,
+		Since:     since,
 		ListOptions: github.ListOptions{
 			PerPage: g.maxPerPage,
 		},
