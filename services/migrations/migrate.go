@@ -525,6 +525,7 @@ func SyncRepository(ctx context.Context, doer *user_model.User, repo *repo_model
 
 	uploader := NewGiteaLocalUploader(ctx, doer, repo.OwnerName, opts.RepoName)
 	uploader.gitServiceType = opts.GitServiceType
+	uploader.syncMode = true
 	uploader.repo = repo
 	uploader.sameApp = strings.HasPrefix(repo.OriginalURL, setting.AppURL)
 	uploader.gitRepo, err = git.OpenRepository(ctx, repo)

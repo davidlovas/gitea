@@ -53,6 +53,11 @@ type GiteaLocalUploader struct {
 	userMap        map[int64]int64 // external user id mapping to user id
 	prCache        map[int64]*issues_model.PullRequest
 	gitServiceType structs.GitServiceType
+	// syncMode marks an incremental re-sync of an existing repository (set by
+	// SyncRepository). The ensure* helpers only create missing labels and
+	// milestones in sync mode; one-time migrations and restores keep the
+	// skip-unknown semantics of the stock migration path.
+	syncMode bool
 }
 
 // NewGiteaLocalUploader creates a gitea Uploader via gitea API v1
@@ -488,15 +493,21 @@ func (g *GiteaLocalUploader) PatchIssues(ctx context.Context, issues ...*base.Is
 	return nil
 }
 
-// ensureLabels returns the repository labels matching the given ones, creating
-// any that do not exist yet and caching them. This lets a sync carry an issue's
-// labels along even when the label was never separately imported (e.g. on a
-// mirror whose initial import was git-only).
+// ensureLabels returns the repository labels matching the given ones. In sync
+// mode it creates any that do not exist yet and caches them, so a sync carries
+// an issue's labels along even when the label was never separately imported
+// (e.g. a PR-only label on a mirror whose initial import was git-only). Outside
+// sync mode unknown names are skipped, matching the one-time migration path: a
+// dump can legitimately reference labels the repository does not own (org-level
+// labels), and restoring must not recreate those as repository labels.
 func (g *GiteaLocalUploader) ensureLabels(ctx context.Context, labels []*base.Label) ([]*issues_model.Label, error) {
 	result := make([]*issues_model.Label, 0, len(labels))
 	for _, l := range labels {
 		lb, ok := g.labels[l.Name]
 		if !ok {
+			if !g.syncMode {
+				continue
+			}
 			color, err := label.NormalizeColor(l.Color)
 			if err != nil {
 				log.Warn("Invalid label color: #%s for label: %s in %s/%s", l.Color, l.Name, g.repoOwner, g.repoName)
@@ -520,13 +531,18 @@ func (g *GiteaLocalUploader) ensureLabels(ctx context.Context, labels []*base.La
 }
 
 // ensureMilestone returns the id of the repository milestone with the given
-// title, creating it if needed, so a synced issue's milestone is carried along.
+// title, creating it if needed in sync mode, so a synced issue's milestone is
+// carried along. Outside sync mode unknown titles resolve to no milestone,
+// matching the one-time migration path.
 func (g *GiteaLocalUploader) ensureMilestone(ctx context.Context, title string) (int64, error) {
 	if title == "" {
 		return 0, nil
 	}
 	if id, ok := g.milestones[title]; ok {
 		return id, nil
+	}
+	if !g.syncMode {
+		return 0, nil
 	}
 	ms := &issues_model.Milestone{RepoID: g.repo.ID, Name: title}
 	if err := issues_model.NewMilestone(ctx, ms); err != nil {
