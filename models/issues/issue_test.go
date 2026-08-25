@@ -18,6 +18,7 @@ import (
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/setting"
 	"gitea.dev/modules/test"
+	"gitea.dev/modules/timeutil"
 
 	"github.com/stretchr/testify/assert"
 	"xorm.io/builder"
@@ -464,4 +465,24 @@ func TestMigrate_CreateIssuesIsPullFalse(t *testing.T) {
 
 func TestMigrate_CreateIssuesIsPullTrue(t *testing.T) {
 	assertCreateIssues(t, true)
+}
+
+// TestUpsertIssuesPersistsUpdatedUnix guards the sync resume watermark: xorm
+// silently drops `updated`-tagged columns from an UPDATE when auto-time is off
+// (even under AllCols), so re-upserting an existing issue must still persist
+// the remote timestamp — it is what the incremental sync resumes from.
+func TestUpsertIssuesPersistsUpdatedUnix(t *testing.T) {
+	assert.NoError(t, unittest.PrepareTestDatabase())
+
+	existing := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 1})
+	remote := timeutil.TimeStamp(1700000000)
+	assert.NotEqual(t, remote, existing.UpdatedUnix)
+
+	up := *existing
+	up.ID = 0 // upsert matches on (repo_id, index), not id
+	up.UpdatedUnix = remote
+	assert.NoError(t, issues_model.UpsertIssues(t.Context(), &up))
+
+	stored := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: existing.ID})
+	assert.Equal(t, remote, stored.UpdatedUnix, "re-upsert must persist the remote updated timestamp (the sync watermark)")
 }

@@ -591,6 +591,31 @@ func (repo *Repository) AllowsPulls(ctx context.Context) bool {
 	return repo.CanEnablePulls() && repo.UnitEnabled(ctx, unit.TypePullRequests)
 }
 
+func (repo *Repository) IsMirrorWithMetadata(ctx context.Context) (bool, error) {
+	if !repo.IsMirror {
+		return false, nil
+	}
+	mirror, err := GetMirrorByRepoID(ctx, repo.ID)
+	if err != nil {
+		if errors.Is(err, ErrMirrorNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return mirror.SyncIssues || mirror.SyncPullRequests, nil
+}
+
+// CanShowPulls reports whether the repository's pull requests should be shown.
+// Normal repos: whenever they can accept pulls. Metadata mirrors: they can't
+// accept new pulls, but they reflect their remote's pull requests read-only, so
+// the PR tab/routes must be available even though CanEnablePulls() is false.
+func (repo *Repository) CanShowPulls(ctx context.Context) (bool, error) {
+	if repo.CanEnablePulls() {
+		return true, nil
+	}
+	return repo.IsMirrorWithMetadata(ctx)
+}
+
 // CanEnableEditor returns true if repository meets the requirements of web editor.
 // FIXME: most CanEnableEditor calls should be replaced with CanContentChange
 // And all other like CanCreateBranch / CanEnablePulls should also be updated

@@ -425,6 +425,13 @@ func prepareMigrationTasks() []*migration {
 		newMigration(349, "Expand action_schedule content column", v28.ExpandActionScheduleContent),
 		newMigration(350, "Add published_unix column to release", v28.AddPublishedUnixToRelease),
 		newMigration(351, "Track transfer recipient access grants", v28.AddRecipientAccessGrantedToRepoTransfer),
+
+		// Metadata-mirror migrations (fork). Renumbered to follow upstream's latest
+		// migration ID so the list stays monotonic — upstream's v28 batch grew to
+		// 351, so these trail it at 352-354 (were 350-352).
+		newMigration(352, "Add original_id column to comment and review for incremental mirror sync", v1_27.AddOriginalIDToCommentAndReview),
+		newMigration(353, "Add metadata sync options to mirror", v1_27.AddMetadataSyncOptionsToMirror),
+		newMigration(354, "Add head repo owner to pull request", v1_27.AddHeadRepoOwnerToPullRequest),
 	}
 	return preparedMigrations
 }
