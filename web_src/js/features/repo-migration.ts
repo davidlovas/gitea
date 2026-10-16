@@ -13,14 +13,19 @@ export const initRepoMigration = () => registerGlobalInitFunc('initGitMigrateFor
   const lfsSettings = elForm.querySelector<HTMLElement>('#lfs_settings');
   const lfsEndpoint = elForm.querySelector<HTMLElement>('#lfs_endpoint');
   const items = elForm.querySelectorAll<HTMLInputElement>('#migrate_items input[type=checkbox]');
+  const syncItems = elForm.querySelector<HTMLElement>('#migrate_sync_items');
 
   checkItems(Number(service.value) !== 1); // 1 = plain git service
   setLFSSettingsVisibility();
+  setSyncItemsVisibility();
 
   user?.addEventListener('input', () => checkItems(false));
   pass?.addEventListener('input', () => checkItems(false));
   token?.addEventListener('input', () => checkItems(true));
-  mirror?.addEventListener('change', () => checkItems(true));
+  mirror?.addEventListener('change', () => {
+    checkItems(true);
+    setSyncItemsVisibility();
+  });
   elForm.querySelector('#lfs_settings_show')?.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -53,16 +58,16 @@ export const initRepoMigration = () => registerGlobalInitFunc('initGitMigrateFor
     } else {
       enableItems = user?.value !== '' || pass?.value !== '';
     }
-    if (enableItems && Number(service?.value) > 1) {
-      if (mirror?.checked) {
-        for (const item of items) {
-          item.disabled = item.name !== 'wiki';
-        }
-        return;
-      }
-      for (const item of items) item.disabled = false;
-    } else {
-      for (const item of items) item.disabled = true;
+    const hasToken = enableItems && Number(service?.value) > 1;
+    // One-time migration items: enabled when there's a token and NOT in mirror mode
+    // (mirror mode hides them and shows the sync metadata section instead).
+    for (const item of items) {
+      item.disabled = !hasToken || Boolean(mirror?.checked);
+    }
+    // Sync metadata checkboxes: enabled when there's a token and IN mirror mode.
+    const syncCheckboxes = syncItems?.querySelectorAll<HTMLInputElement>('input[type=checkbox]') ?? [];
+    for (const item of syncCheckboxes) {
+      item.disabled = !hasToken;
     }
   }
 
@@ -71,5 +76,16 @@ export const initRepoMigration = () => registerGlobalInitFunc('initGitMigrateFor
     const visible = lfs.checked;
     toggleElem(lfsSettings!, visible);
     hideElem(lfsEndpoint!);
+  }
+
+  function setSyncItemsVisibility() {
+    if (!syncItems) return;
+    const isMirror = Boolean(mirror?.checked);
+    toggleElem(syncItems, isMirror);
+    // When mirror mode is on, the one-time migration items (issues/PRs/labels/milestones/
+    // releases) are irrelevant: the sync metadata options replace them. Hide the grayed-out
+    // duplicates so the form shows one clear set of choices, not two.
+    const migrateItems = elForm.querySelector<HTMLElement>('#migrate_items');
+    if (migrateItems) toggleElem(migrateItems, !isMirror);
   }
 });
